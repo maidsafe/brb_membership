@@ -3,6 +3,10 @@
 [MaidSafe website](http://maidsafe.net) | [Safe Network Forum](https://safenetforum.org/)
 :-------------------------------------: | :---------------------------------------------:
 
+## About
+
+Please see the [brb crate](https://github.com/maidsafe/brb/).
+
 ## License
 
 This Safe Network software is dual-licensed under the Modified BSD (<LICENSE-BSD> <https://opensource.org/licenses/BSD-3-Clause>) or the MIT license (<LICENSE-MIT> <https://opensource.org/licenses/MIT>) at your option.
