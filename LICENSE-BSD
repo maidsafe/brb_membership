@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 Copyright 2019 MaidSafe.net limited.
+=======
+Copyright 2020 MaidSafe.net limited.
+>>>>>>> 1b80124... import dynamic membership code from brb crate (and before that bft-crdts)
 
 Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
 
