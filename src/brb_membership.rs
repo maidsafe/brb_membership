@@ -37,10 +37,10 @@ impl std::fmt::Debug for Reconfig {
 
 impl Reconfig {
     fn apply(self, members: &mut BTreeSet<Actor>) {
-	match self {
-	    Reconfig::Join(p) => members.insert(p),
-	    Reconfig::Leave(p) => members.remove(&p),
-	};
+        match self {
+            Reconfig::Join(p) => members.insert(p),
+            Reconfig::Leave(p) => members.remove(&p),
+        };
     }
 }
 
@@ -199,46 +199,42 @@ pub enum Error {
 
 impl State {
     pub fn force_join(&mut self, actor: Actor) {
-        let forced_reconfigs = self.forced_reconfigs
-	    .entry(self.gen)
-	    .or_default();
+        let forced_reconfigs = self.forced_reconfigs.entry(self.gen).or_default();
 
-	// remove any leave reconfigs for this actor
-	forced_reconfigs.remove(&Reconfig::Leave(actor));
-	forced_reconfigs.insert(Reconfig::Join(actor));
+        // remove any leave reconfigs for this actor
+        forced_reconfigs.remove(&Reconfig::Leave(actor));
+        forced_reconfigs.insert(Reconfig::Join(actor));
     }
 
     pub fn force_leave(&mut self, actor: Actor) {
-        let forced_reconfigs = self.forced_reconfigs
-	    .entry(self.gen)
-	    .or_default();
+        let forced_reconfigs = self.forced_reconfigs.entry(self.gen).or_default();
 
-	// remove any leave reconfigs for this actor
-	forced_reconfigs.remove(&Reconfig::Join(actor));
-	forced_reconfigs.insert(Reconfig::Leave(actor));
+        // remove any leave reconfigs for this actor
+        forced_reconfigs.remove(&Reconfig::Join(actor));
+        forced_reconfigs.insert(Reconfig::Leave(actor));
     }
 
     pub fn members(&self, gen: Generation) -> Result<BTreeSet<Actor>, Error> {
         let mut members = BTreeSet::new();
 
-	self.forced_reconfigs
-	    .get(&0) // forced reconfigs at generation 0
-	    .cloned()
-	    .unwrap_or_default()
-	    .into_iter()
-	    .for_each(|r| r.apply(&mut members));
+        self.forced_reconfigs
+            .get(&0) // forced reconfigs at generation 0
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .for_each(|r| r.apply(&mut members));
 
         if gen == 0 {
             return Ok(members);
         }
 
         for (history_gen, vote) in self.history.iter() {
-	    self.forced_reconfigs
-		.get(history_gen)
-		.cloned()
-		.unwrap_or_default()
-		.into_iter()
-		.for_each(|r| r.apply(&mut members));
+            self.forced_reconfigs
+                .get(history_gen)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .for_each(|r| r.apply(&mut members));
 
             let votes = match &vote.ballot {
                 Ballot::SuperMajority(votes) => votes,
@@ -247,9 +243,9 @@ impl State {
                 }
             };
 
-	    self.resolve_votes(votes)
-		.into_iter()
-		.for_each(|r| r.apply(&mut members));
+            self.resolve_votes(votes)
+                .into_iter()
+                .for_each(|r| r.apply(&mut members));
 
             if history_gen == &gen {
                 return Ok(members);
@@ -261,22 +257,23 @@ impl State {
 
     pub fn propose(&mut self, reconfig: Reconfig) -> Result<Vec<VoteMsg>, Error> {
         let vote = self.build_vote(self.gen + 1, Ballot::Propose(reconfig))?;
-	self.validate_vote(&vote)?;
+        self.validate_vote(&vote)?;
         self.cast_vote(vote)
     }
 
     pub fn anti_entropy(&self, from_gen: Generation, actor: Actor) -> Vec<VoteMsg> {
-	let mut msgs: Vec<_> = self.history
+        let mut msgs: Vec<_> = self
+            .history
             .iter() // history is a BTreeSet, .iter() is ordered by generation
-	    .filter(|(gen, _)| **gen > from_gen)
+            .filter(|(gen, _)| **gen > from_gen)
             .map(|(_, membership_proof)| self.send(membership_proof.clone(), actor))
             .collect();
 
-	if from_gen == self.gen {
-	    msgs.extend(self.votes.values().cloned().map(|v| self.send(v, actor)));
-	}
+        if from_gen == self.gen {
+            msgs.extend(self.votes.values().cloned().map(|v| self.send(v, actor)));
+        }
 
-	msgs
+        msgs
     }
 
     pub fn handle_vote(&mut self, vote: Vote) -> Result<Vec<VoteMsg>, Error> {
@@ -312,31 +309,27 @@ impl State {
 
         if self.is_super_majority_over_super_majorities(&self.votes.values().cloned().collect())? {
             println!("[DSB] Detected super majority over super majorities");
-            let we_were_a_member_during_this_generation =
-                self.members(self.gen)?.contains(&self.id.actor());
-
-            let reconfigs_we_agreed_to =
-                self.resolve_votes(&self.votes.values().cloned().collect());
-
-            self.gen = self.pending_gen;
 
             // store a proof of what the network decided in our history so that we can onboard future procs.
-	    let sm_vote = if we_were_a_member_during_this_generation {
-                let ballot = Ballot::SuperMajority(self.votes.values().cloned().collect()).simplify();
+            let sm_vote = if self.members(self.gen)?.contains(&self.id.actor()) {
+                // we were a member during this generation, log the votes we have seen as our history.
+                let ballot =
+                    Ballot::SuperMajority(self.votes.values().cloned().collect()).simplify();
                 Vote {
                     voter: self.id.actor(),
-                    sig: self.id.sign((&ballot, &self.gen))?,
-                    gen: self.gen,
+                    sig: self.id.sign((&ballot, &self.pending_gen))?,
+                    gen: self.pending_gen,
                     ballot,
                 }
-	    } else {
-		// We were not a member, therefore this vote that just came in had the information we needed to proof a super majority over super majority
-		vote.clone()
-	    };
-            self.history.insert(self.gen, sm_vote);
+            } else {
+                // We were not a member, therefore one of the members had sent us this vote to onboard us or to keep us up to date.
+                vote.clone()
+            };
 
+            self.history.insert(self.pending_gen, sm_vote);
             // clear our pending votes
             self.votes = Default::default();
+            self.gen = self.pending_gen;
 
             return Ok(vec![]);
         }
@@ -384,7 +377,6 @@ impl State {
         // We have determined that we don't yet have enough votes to take action.
         // If we have not yet voted, this is where we would contribute our vote
         if !self.votes.contains_key(&self.id.actor()) {
-            // vote with all pending reconfigs
             let vote = self.build_vote(self.pending_gen, vote.ballot.clone())?;
             return self.cast_vote(vote);
         }
@@ -709,8 +701,6 @@ mod tests {
             println!("[NET] resp: {:#?}", resp);
             match resp {
                 Ok(vote_msgs) => {
-                    // A process only accepts a packet if it considers the sender a member
-                    assert!(dest_members.contains(&source));
                     let dest_actor = dest_proc.id.actor();
                     self.queue_packets(vote_msgs.into_iter().map(|vote_msg| Packet {
                         source: dest_actor,
@@ -719,7 +709,12 @@ mod tests {
                 }
                 Err(Error::VoteFromNonMember { voter, members }) => {
                     assert_eq!(members, dest_members.clone());
-                    assert!(!dest_members.contains(&source), "{:?} should not be in {:?}", source, dest_members);
+                    assert!(
+                        !dest_members.contains(&voter),
+                        "{:?} should not be in {:?}",
+                        source,
+                        dest_members
+                    );
                 }
                 Err(Error::VoteNotForNextGeneration {
                     vote_gen,
@@ -838,7 +833,12 @@ msc {\n
     #[test]
     fn test_reject_new_join_if_we_are_at_capacity() {
         let mut proc = State {
-            forced_reconfigs: vec![(0, (0..7).map(|_| Reconfig::Join(Actor::default())).collect())].into_iter().collect(),
+            forced_reconfigs: vec![(
+                0,
+                (0..7).map(|_| Reconfig::Join(Actor::default())).collect(),
+            )]
+            .into_iter()
+            .collect(),
             ..State::default()
         };
         proc.force_join(proc.id.actor());
@@ -858,7 +858,12 @@ msc {\n
     #[test]
     fn test_reject_join_if_actor_is_already_a_member() {
         let mut proc = State {
-            forced_reconfigs: vec![(0, (0..1).map(|_| Reconfig::Join(Actor::default())).collect())].into_iter().collect(),
+            forced_reconfigs: vec![(
+                0,
+                (0..1).map(|_| Reconfig::Join(Actor::default())).collect(),
+            )]
+            .into_iter()
+            .collect(),
             ..State::default()
         };
         proc.force_join(proc.id.actor());
@@ -873,7 +878,12 @@ msc {\n
     #[test]
     fn test_reject_leave_if_actor_is_not_a_member() {
         let mut proc = State {
-            forced_reconfigs: vec![(0, (0..1).map(|_| Reconfig::Join(Actor::default())).collect())].into_iter().collect(),
+            forced_reconfigs: vec![(
+                0,
+                (0..1).map(|_| Reconfig::Join(Actor::default())).collect(),
+            )]
+            .into_iter()
+            .collect(),
             ..State::default()
         };
         proc.force_join(proc.id.actor());
@@ -986,13 +996,16 @@ msc {\n
             for i in 0..(nprocs * 2) {
                 let i_actor = net.procs[i].id.actor();
                 for j in 0..(nprocs * 2) {
-		    let j_actor = net.procs[j].id.actor();
+                    let j_actor = net.procs[j].id.actor();
                     net.queue_packets(
-			net.procs[j]
-			    .anti_entropy(net.procs[i].gen, i_actor)
-			    .into_iter()
-			    .map(|vote_msg| Packet { source: j_actor, vote_msg })
-		    )
+                        net.procs[j]
+                            .anti_entropy(net.procs[i].gen, i_actor)
+                            .into_iter()
+                            .map(|vote_msg| Packet {
+                                source: j_actor,
+                                vote_msg,
+                            }),
+                    )
                 }
             }
             net.drain_queued_packets();
@@ -1051,21 +1064,22 @@ msc {\n
                 }
             }
 
-	    for i in 0..(nprocs * 2) {
+            for i in 0..(nprocs * 2) {
                 let i_actor = net.procs[i].id.actor();
                 for j in 0..(nprocs * 2) {
-		    let j_actor = net.procs[j].id.actor();
+                    let j_actor = net.procs[j].id.actor();
                     net.queue_packets(
-			net.procs[j]
-			    .anti_entropy(net.procs[i].gen, i_actor)
-			    .into_iter()
-			    .map(|vote_msg| Packet { source: j_actor, vote_msg })
-		    )
+                        net.procs[j]
+                            .anti_entropy(net.procs[i].gen, i_actor)
+                            .into_iter()
+                            .map(|vote_msg| Packet {
+                                source: j_actor,
+                                vote_msg,
+                            }),
+                    )
                 }
-            } 
+            }
             net.drain_queued_packets();
-
-
 
             let mut msc_file =
                 File::create(format!("round_robin_split_vote_{}.msc", nprocs)).unwrap();
@@ -1108,15 +1122,15 @@ msc {\n
         net.queue_packets(packets);
         net.deliver_packet_from_source(p0);
         net.deliver_packet_from_source(p0);
-	net.queue_packets(
-	    net.procs[0]
-		.anti_entropy(0, p1)
-		.into_iter()
-		.map(|vote_msg| Packet {
-		    source: p0,
-		    vote_msg,
-		})
-	);
+        net.queue_packets(
+            net.procs[0]
+                .anti_entropy(0, p1)
+                .into_iter()
+                .map(|vote_msg| Packet {
+                    source: p0,
+                    vote_msg,
+                }),
+        );
         let packets = net.procs[0]
             .propose(Reconfig::Join(p2))
             .unwrap()
@@ -1128,21 +1142,22 @@ msc {\n
         net.queue_packets(packets);
         net.drain_queued_packets();
 
-	for i in 0..3 {
+        for i in 0..3 {
             let i_actor = net.procs[i].id.actor();
             for j in 0..3 {
-		let j_actor = net.procs[j].id.actor();
+                let j_actor = net.procs[j].id.actor();
                 net.queue_packets(
-		    net.procs[j]
-			.anti_entropy(net.procs[i].gen, i_actor)
-			.into_iter()
-			.map(|vote_msg| Packet { source: j_actor, vote_msg })
-		)
+                    net.procs[j]
+                        .anti_entropy(net.procs[i].gen, i_actor)
+                        .into_iter()
+                        .map(|vote_msg| Packet {
+                            source: j_actor,
+                            vote_msg,
+                        }),
+                )
             }
         }
         net.drain_queued_packets();
-
-
 
         let mut procs_by_gen: BTreeMap<Generation, Vec<State>> = Default::default();
 
@@ -1196,7 +1211,7 @@ msc {\n
         RequestJoin(usize, usize),
         RequestLeave(usize, usize),
         DeliverPacketFromSource(usize),
-	AntiEntropy(Generation, usize, usize),
+        AntiEntropy(Generation, usize, usize),
     }
     impl Arbitrary for Instruction {
         fn arbitrary<G: Gen>(g: &mut G) -> Self {
@@ -1243,7 +1258,7 @@ msc {\n
                         shrunk_ops.push(Instruction::DeliverPacketFromSource(p - 1));
                     }
                 }
-		Instruction::AntiEntropy(gen, p, q) => {
+                Instruction::AntiEntropy(gen, p, q) => {
                     if p > 0 && q > 0 {
                         shrunk_ops.push(Instruction::AntiEntropy(gen, p - 1, q - 1));
                     }
@@ -1253,10 +1268,10 @@ msc {\n
                     if q > 0 {
                         shrunk_ops.push(Instruction::AntiEntropy(gen, p, q - 1));
                     }
-		    if gen > 0 {
-			shrunk_ops.push(Instruction::AntiEntropy(gen - 1, p, q));
-		    }
-		}
+                    if gen > 0 {
+                        shrunk_ops.push(Instruction::AntiEntropy(gen - 1, p, q));
+                    }
+                }
             }
 
             Box::new(shrunk_ops.into_iter())
@@ -1292,12 +1307,12 @@ msc {\n
                         let reconfig = Reconfig::Join(p);
 
                         let q = &mut net.procs[q_idx.min(n - 1)];
-			let q_actor = q.id.actor();
+                        let q_actor = q.id.actor();
                         match q.propose(reconfig.clone()) {
                             Ok(propose_vote_msgs) => {
-				let propose_packets = propose_vote_msgs
-				    .into_iter()
-				    .map(|vote_msg| Packet { source: q_actor, vote_msg });
+                                let propose_packets = propose_vote_msgs
+                                    .into_iter()
+                                    .map(|vote_msg| Packet { source: q_actor, vote_msg });
                                 net.reconfigs_by_gen.entry(q.pending_gen).or_default().insert(reconfig);
                                 net.queue_packets(propose_packets);
                             }
@@ -1325,15 +1340,15 @@ msc {\n
                         let reconfig = Reconfig::Leave(p);
 
                         let q = &mut net.procs[q_idx.min(n - 1)];
-			let q_actor = q.id.actor();
+                        let q_actor = q.id.actor();
                         match q.propose(reconfig.clone()) {
                             Ok(propose_vote_msgs) => {
-				let propose_packets = propose_vote_msgs.
-				    into_iter().
-				    map(|vote_msg| Packet { source: q_actor, vote_msg });
+                                let propose_packets = propose_vote_msgs.
+                                    into_iter().
+                                    map(|vote_msg| Packet { source: q_actor, vote_msg });
                                 net.reconfigs_by_gen.entry(q.pending_gen).or_default().insert(reconfig);
                                 net.queue_packets(propose_packets);
-			    }
+                            }
                             Err(Error::LeaveRequestForNonMember { .. }) => {
                                 assert!(!q.members(q.gen).unwrap().contains(&p));
                             }
@@ -1357,16 +1372,15 @@ msc {\n
                         let source = net.procs[source_idx.min(n - 1)].id.actor();
                         net.deliver_packet_from_source(source);
                     }
-		    Instruction::AntiEntropy(gen, p_idx, q_idx) => {
-			let p = &net.procs[p_idx.min(n - 1)];
-                        let q = &net.procs[q_idx.min(n - 1)];
-			let p_actor = p.id.actor();
-			net.queue_packets(
-			    p.anti_entropy(gen, q.id.actor())
-				.into_iter()
-				.map(|vote_msg| Packet { source: p_actor, vote_msg })
-			);
-		    }
+                    Instruction::AntiEntropy(gen, p_idx, q_idx) => {
+                        let p = &net.procs[p_idx.min(n - 1)];
+                        let q_actor = net.procs[q_idx.min(n - 1)].id.actor();
+                        let p_actor = p.id.actor();
+                        let anti_entropy_packets = p.anti_entropy(gen, q_actor)
+                            .into_iter()
+                            .map(|vote_msg| Packet { source: p_actor, vote_msg });
+                        net.queue_packets(anti_entropy_packets);
+                    }
                 }
             }
 
@@ -1375,24 +1389,24 @@ msc {\n
             net.drain_queued_packets();
             println!("{:#?}", net);
 
-	    loop {
-		for i in 0..net.procs.len() {
+            loop {
+                for i in 0..net.procs.len() {
                     let i_actor = net.procs[i].id.actor();
                     for j in 0..net.procs.len() {
-			let j_actor = net.procs[j].id.actor();
-			net.queue_packets(
-			    net.procs[j]
-				.anti_entropy(net.procs[i].gen, i_actor)
-				.into_iter()
-				.map(|vote_msg| Packet { source: j_actor, vote_msg })
-			)
+                        let j_actor = net.procs[j].id.actor();
+                        net.queue_packets(
+                            net.procs[j]
+                                .anti_entropy(net.procs[i].gen, i_actor)
+                                .into_iter()
+                                .map(|vote_msg| Packet { source: j_actor, vote_msg })
+                        )
                     }
-		}
-		if net.packets.len() == 0 {
-		    break;
-		}
-		net.drain_queued_packets();
-	    }
+                }
+                if net.packets.len() == 0 {
+                    break;
+                }
+                net.drain_queued_packets();
+            }
 
             // We should have no more pending votes.
             for p in net.procs.iter() {
