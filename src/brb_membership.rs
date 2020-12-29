@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use bincode;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -262,6 +261,13 @@ impl State {
     }
 
     pub fn anti_entropy(&self, from_gen: Generation, actor: Actor) -> Vec<VoteMsg> {
+        println!(
+            "[MBR] anti-entropy for {:?}.{} from {:?}",
+            actor,
+            from_gen,
+            self.id.actor()
+        );
+
         let mut msgs: Vec<_> = self
             .history
             .iter() // history is a BTreeSet, .iter() is ordered by generation
@@ -269,9 +275,7 @@ impl State {
             .map(|(_, membership_proof)| self.send(membership_proof.clone(), actor))
             .collect();
 
-        if from_gen == self.gen {
-            msgs.extend(self.votes.values().cloned().map(|v| self.send(v, actor)));
-        }
+        msgs.extend(self.votes.values().cloned().map(|v| self.send(v, actor)));
 
         msgs
     }
@@ -283,7 +287,7 @@ impl State {
         self.pending_gen = vote.gen;
 
         if self.is_split_vote(&self.votes.values().cloned().collect())? {
-            println!("[DSB] Detected split vote");
+            println!("[MBR] Detected split vote");
             let merge_vote = self.build_vote(
                 self.pending_gen,
                 Ballot::Merge(self.votes.values().cloned().collect()).simplify(),
@@ -297,45 +301,55 @@ impl State {
 
                 if reconfigs_we_voted_for == reconfigs_we_would_vote_for {
                     println!(
-                        "[DSB] This vote didn't add new information, waiting for more votes..."
+                        "[MBR] This vote didn't add new information, waiting for more votes..."
                     );
                     return Ok(vec![]);
                 }
             }
 
-            println!("[DSB] Either we haven't voted or our previous vote didn't fully overlap, merge them.");
+            println!("[MBR] Either we haven't voted or our previous vote didn't fully overlap, merge them.");
             return self.cast_vote(merge_vote);
         }
 
         if self.is_super_majority_over_super_majorities(&self.votes.values().cloned().collect())? {
-            println!("[DSB] Detected super majority over super majorities");
+            println!("[MBR] Detected super majority over super majorities");
 
             // store a proof of what the network decided in our history so that we can onboard future procs.
             let sm_vote = if self.members(self.gen)?.contains(&self.id.actor()) {
                 // we were a member during this generation, log the votes we have seen as our history.
                 let ballot =
                     Ballot::SuperMajority(self.votes.values().cloned().collect()).simplify();
-                Vote {
+                Some(Vote {
                     voter: self.id.actor(),
                     sig: self.id.sign((&ballot, &self.pending_gen))?,
                     gen: self.pending_gen,
                     ballot,
-                }
+                })
             } else {
                 // We were not a member, therefore one of the members had sent us this vote to onboard us or to keep us up to date.
-                vote.clone()
+                let should_add_vote_to_history = self.is_super_majority_over_super_majorities(
+                    &vote.unpack_votes().into_iter().cloned().collect(),
+                )?;
+                if should_add_vote_to_history {
+                    println!("[MBR] Adding vote to history");
+                    Some(vote)
+                } else {
+                    None
+                }
             };
 
-            self.history.insert(self.pending_gen, sm_vote);
-            // clear our pending votes
-            self.votes = Default::default();
-            self.gen = self.pending_gen;
+            if let Some(sm_vote) = sm_vote {
+                self.history.insert(self.pending_gen, sm_vote);
+                // clear our pending votes
+                self.votes = Default::default();
+                self.gen = self.pending_gen;
+            }
 
             return Ok(vec![]);
         }
 
         if self.is_super_majority(&self.votes.values().cloned().collect())? {
-            println!("[DSB] Detected super majority");
+            println!("[MBR] Detected super majority");
 
             if let Some(our_vote) = self.votes.get(&self.id.actor()) {
                 // We voted during this generation.
@@ -358,15 +372,15 @@ impl State {
                     .is_some();
 
                 if we_have_comitted_to_reconfigs_not_in_super_majority {
-                    println!("[DSB] We have committed to reconfigs that the super majority has not seen, waiting till we either have a split vote or SM/SM");
+                    println!("[MBR] We have committed to reconfigs that the super majority has not seen, waiting till we either have a split vote or SM/SM");
                     return Ok(vec![]);
                 } else if our_vote.is_super_majority_ballot() {
-                    println!("[DSB] We've already sent a super majority, waiting till we either have a split vote or SM / SM");
+                    println!("[MBR] We've already sent a super majority, waiting till we either have a split vote or SM / SM");
                     return Ok(vec![]);
                 }
             }
 
-            println!("[DSB] broadcasting super majority");
+            println!("[MBR] broadcasting super majority");
             let vote = self.build_vote(
                 self.pending_gen,
                 Ballot::SuperMajority(self.votes.values().cloned().collect()).simplify(),
@@ -377,7 +391,7 @@ impl State {
         // We have determined that we don't yet have enough votes to take action.
         // If we have not yet voted, this is where we would contribute our vote
         if !self.votes.contains_key(&self.id.actor()) {
-            let vote = self.build_vote(self.pending_gen, vote.ballot.clone())?;
+            let vote = self.build_vote(self.pending_gen, vote.ballot)?;
             return self.cast_vote(vote);
         }
 
@@ -535,7 +549,7 @@ impl State {
                     if vote.gen != gen {
                         return Err(Error::VoteNotForNextGeneration {
                             vote_gen: vote.gen,
-                            gen: gen,
+                            gen,
                             pending_gen: gen,
                         });
                     }
@@ -554,14 +568,14 @@ impl State {
                 )? {
                     Err(Error::SuperMajorityBallotIsNotSuperMajority {
                         ballot: ballot.clone(),
-                        members: members,
+                        members,
                     })
                 } else {
                     for vote in votes.iter() {
                         if vote.gen != gen {
                             return Err(Error::VoteNotForNextGeneration {
                                 vote_gen: vote.gen,
-                                gen: gen,
+                                gen,
                                 pending_gen: gen,
                             });
                         }
@@ -580,10 +594,10 @@ impl State {
                 if members.contains(&actor) {
                     Err(Error::JoinRequestForExistingMember {
                         requester: *actor,
-                        members: members,
+                        members,
                     })
                 } else if members.len() >= SOFT_MAX_MEMBERS {
-                    Err(Error::MembersAtCapacity { members: members })
+                    Err(Error::MembersAtCapacity { members })
                 } else {
                     Ok(())
                 }
@@ -592,7 +606,7 @@ impl State {
                 if !members.contains(&actor) {
                     Err(Error::LeaveRequestForNonMember {
                         requester: *actor,
-                        members: members,
+                        members,
                     })
                 } else {
                     Ok(())
@@ -702,7 +716,7 @@ mod tests {
             match resp {
                 Ok(vote_msgs) => {
                     let dest_actor = dest_proc.id.actor();
-                    self.queue_packets(vote_msgs.into_iter().map(|vote_msg| Packet {
+                    self.enqueue_packets(vote_msgs.into_iter().map(|vote_msg| Packet {
                         source: dest_actor,
                         vote_msg,
                     }));
@@ -743,7 +757,7 @@ mod tests {
             }
         }
 
-        pub fn queue_packets(&mut self, packets: impl IntoIterator<Item = Packet>) {
+        pub fn enqueue_packets(&mut self, packets: impl IntoIterator<Item = Packet>) {
             for packet in packets {
                 self.packets.entry(packet.source).or_default().push(packet);
             }
@@ -760,6 +774,19 @@ mod tests {
             if let Some(proc) = self.procs.iter_mut().find(|proc| proc.id.actor() == p) {
                 proc.force_join(q);
             }
+        }
+
+        pub fn enqueue_anti_entropy(&mut self, i: usize, j: usize) {
+            let i_gen = self.procs[i].gen;
+            let i_actor = self.procs[i].id.actor();
+            let j_actor = self.procs[j].id.actor();
+
+            self.enqueue_packets(self.procs[j].anti_entropy(i_gen, i_actor).into_iter().map(
+                |vote_msg| Packet {
+                    source: j_actor,
+                    vote_msg,
+                },
+            ));
         }
 
         pub fn generate_msc(&self) -> String {
@@ -823,7 +850,7 @@ msc {\n
 
         let resp = net.procs[1].propose(Reconfig::Join(Default::default()));
         assert!(resp.is_ok());
-        net.queue_packets(resp.unwrap().into_iter().map(|vote_msg| Packet {
+        net.enqueue_packets(resp.unwrap().into_iter().map(|vote_msg| Packet {
             source: p1,
             vote_msg,
         }));
@@ -931,7 +958,7 @@ msc {\n
         assert_eq!(packets.len(), 2); // two members in the network
         assert_eq!(stale_packets.len(), 2);
 
-        net.queue_packets(packets);
+        net.enqueue_packets(packets);
         net.drain_queued_packets();
 
         println!("net: {:#?}", net);
@@ -988,24 +1015,14 @@ msc {\n
                         source: a_i,
                         vote_msg,
                     });
-                net.queue_packets(packets);
+                net.enqueue_packets(packets);
             }
 
             net.drain_queued_packets();
 
             for i in 0..(nprocs * 2) {
-                let i_actor = net.procs[i].id.actor();
                 for j in 0..(nprocs * 2) {
-                    let j_actor = net.procs[j].id.actor();
-                    net.queue_packets(
-                        net.procs[j]
-                            .anti_entropy(net.procs[i].gen, i_actor)
-                            .into_iter()
-                            .map(|vote_msg| Packet {
-                                source: j_actor,
-                                vote_msg,
-                            }),
-                    )
+                    net.enqueue_anti_entropy(i, j);
                 }
             }
             net.drain_queued_packets();
@@ -1054,7 +1071,7 @@ msc {\n
                         source: a_i,
                         vote_msg,
                     });
-                net.queue_packets(packets);
+                net.enqueue_packets(packets);
             }
 
             while !net.packets.is_empty() {
@@ -1065,18 +1082,8 @@ msc {\n
             }
 
             for i in 0..(nprocs * 2) {
-                let i_actor = net.procs[i].id.actor();
                 for j in 0..(nprocs * 2) {
-                    let j_actor = net.procs[j].id.actor();
-                    net.queue_packets(
-                        net.procs[j]
-                            .anti_entropy(net.procs[i].gen, i_actor)
-                            .into_iter()
-                            .map(|vote_msg| Packet {
-                                source: j_actor,
-                                vote_msg,
-                            }),
-                    )
+                    net.enqueue_anti_entropy(i, j);
                 }
             }
             net.drain_queued_packets();
@@ -1119,10 +1126,10 @@ msc {\n
                 source: p0,
                 vote_msg,
             });
-        net.queue_packets(packets);
+        net.enqueue_packets(packets);
         net.deliver_packet_from_source(p0);
         net.deliver_packet_from_source(p0);
-        net.queue_packets(
+        net.enqueue_packets(
             net.procs[0]
                 .anti_entropy(0, p1)
                 .into_iter()
@@ -1139,22 +1146,16 @@ msc {\n
                 source: p0,
                 vote_msg,
             });
-        net.queue_packets(packets);
-        net.drain_queued_packets();
-
-        for i in 0..3 {
-            let i_actor = net.procs[i].id.actor();
-            for j in 0..3 {
-                let j_actor = net.procs[j].id.actor();
-                net.queue_packets(
-                    net.procs[j]
-                        .anti_entropy(net.procs[i].gen, i_actor)
-                        .into_iter()
-                        .map(|vote_msg| Packet {
-                            source: j_actor,
-                            vote_msg,
-                        }),
-                )
+        net.enqueue_packets(packets);
+        loop {
+            net.drain_queued_packets();
+            for i in 0..3 {
+                for j in 0..3 {
+                    net.enqueue_anti_entropy(i, j);
+                }
+            }
+            if net.packets.len() == 0 {
+                break;
             }
         }
         net.drain_queued_packets();
@@ -1199,7 +1200,7 @@ msc {\n
                 source: proc_0,
                 vote_msg,
             });
-        net.queue_packets(packets);
+        net.enqueue_packets(packets);
         net.drain_queued_packets();
 
         let mut msc_file = File::create("simple_join.msc").unwrap();
@@ -1278,6 +1279,105 @@ msc {\n
         }
     }
 
+    #[test]
+    fn test_prop_interpreter_qc1() {
+        let mut net = Net::with_procs(2);
+        let p0 = net.procs[0].id.actor();
+        let p1 = net.procs[1].id.actor();
+
+        for proc in net.procs.iter_mut() {
+            proc.force_join(p0);
+        }
+
+        let reconfig = Reconfig::Join(p1);
+        let q = &mut net.procs[0];
+        let propose_vote_msgs = q.propose(reconfig.clone()).unwrap();
+        let propose_packets = propose_vote_msgs.into_iter().map(|vote_msg| Packet {
+            source: p0,
+            vote_msg,
+        });
+        net.reconfigs_by_gen
+            .entry(q.pending_gen)
+            .or_default()
+            .insert(reconfig);
+        net.enqueue_packets(propose_packets);
+
+        net.enqueue_anti_entropy(1, 0);
+        net.enqueue_anti_entropy(1, 0);
+
+        loop {
+            net.drain_queued_packets();
+            for i in 0..net.procs.len() {
+                for j in 0..net.procs.len() {
+                    net.enqueue_anti_entropy(i, j);
+                }
+            }
+            if net.packets.len() == 0 {
+                break;
+            }
+        }
+
+        for p in net.procs.iter() {
+            assert!(p.history.iter().all(|(_, v)| v.is_super_majority_ballot()));
+        }
+    }
+
+    #[test]
+    fn test_prop_interpreter_qc2() {
+        let mut net = Net::with_procs(3);
+        let p0 = net.procs[0].id.actor();
+        let p1 = net.procs[1].id.actor();
+        let p2 = net.procs[2].id.actor();
+
+        // Assume procs[0] is the genesis proc.
+        for proc in net.procs.iter_mut() {
+            proc.force_join(p0);
+        }
+
+        let propose_packets = net.procs[0]
+            .propose(Reconfig::Join(p1))
+            .unwrap()
+            .into_iter()
+            .map(|vote_msg| Packet {
+                source: p0,
+                vote_msg,
+            });
+        net.enqueue_packets(propose_packets);
+
+        net.deliver_packet_from_source(p0);
+        net.deliver_packet_from_source(p0);
+
+        let propose_packets = net.procs[0]
+            .propose(Reconfig::Join(p2))
+            .unwrap()
+            .into_iter()
+            .map(|vote_msg| Packet {
+                source: p0,
+                vote_msg,
+            });
+        net.enqueue_packets(propose_packets);
+
+        println!("{:#?}", net);
+        println!("--  [DRAINING]  --");
+
+        loop {
+            net.drain_queued_packets();
+            for i in 0..net.procs.len() {
+                for j in 0..net.procs.len() {
+                    net.enqueue_anti_entropy(i, j);
+                }
+            }
+            if net.packets.len() == 0 {
+                break;
+            }
+        }
+
+        // We should have no more pending votes.
+        for p in net.procs.iter() {
+            assert_eq!(p.votes, Default::default());
+        }
+    }
+
     quickcheck! {
         fn prop_interpreter(n: usize, instructions: Vec<Instruction>) -> TestResult {
             fn super_majority(m: usize, n: usize) -> bool {
@@ -1314,7 +1414,7 @@ msc {\n
                                     .into_iter()
                                     .map(|vote_msg| Packet { source: q_actor, vote_msg });
                                 net.reconfigs_by_gen.entry(q.pending_gen).or_default().insert(reconfig);
-                                net.queue_packets(propose_packets);
+                                net.enqueue_packets(propose_packets);
                             }
                             Err(Error::JoinRequestForExistingMember { .. }) => {
                                 assert!(q.members(q.gen).unwrap().contains(&p));
@@ -1347,7 +1447,7 @@ msc {\n
                                     into_iter().
                                     map(|vote_msg| Packet { source: q_actor, vote_msg });
                                 net.reconfigs_by_gen.entry(q.pending_gen).or_default().insert(reconfig);
-                                net.queue_packets(propose_packets);
+                                net.enqueue_packets(propose_packets);
                             }
                             Err(Error::LeaveRequestForNonMember { .. }) => {
                                 assert!(!q.members(q.gen).unwrap().contains(&p));
@@ -1379,27 +1479,19 @@ msc {\n
                         let anti_entropy_packets = p.anti_entropy(gen, q_actor)
                             .into_iter()
                             .map(|vote_msg| Packet { source: p_actor, vote_msg });
-                        net.queue_packets(anti_entropy_packets);
+                        net.enqueue_packets(anti_entropy_packets);
                     }
                 }
             }
 
             println!("{:#?}", net);
             println!("--  [DRAINING]  --");
-            net.drain_queued_packets();
-            println!("{:#?}", net);
 
             loop {
+                net.drain_queued_packets();
                 for i in 0..net.procs.len() {
-                    let i_actor = net.procs[i].id.actor();
                     for j in 0..net.procs.len() {
-                        let j_actor = net.procs[j].id.actor();
-                        net.queue_packets(
-                            net.procs[j]
-                                .anti_entropy(net.procs[i].gen, i_actor)
-                                .into_iter()
-                                .map(|vote_msg| Packet { source: j_actor, vote_msg })
-                        )
+                        net.enqueue_anti_entropy(i, j);
                     }
                 }
                 if net.packets.len() == 0 {
