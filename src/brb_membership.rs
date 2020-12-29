@@ -181,8 +181,8 @@ pub enum Error {
     VoterChangedMind {
         reconfigs: BTreeSet<(Actor, Reconfig)>,
     },
-    #[error("Existing vote {existing_vote:?} not compatible with new vote: {vote:?}")]
-    ExistingVoteIncompatibleWithNewVote { vote: Vote, existing_vote: Vote },
+    #[error("Existing vote {existing_vote:?} not compatible with new vote")]
+    ExistingVoteIncompatibleWithNewVote { existing_vote: Vote },
     #[error("The super majority ballot does not actually have supermajority: {ballot:?} (members: {members:?})")]
     SuperMajorityBallotIsNotSuperMajority {
         ballot: Ballot,
@@ -367,9 +367,7 @@ impl State {
                 let we_have_comitted_to_reconfigs_not_in_super_majority = self
                     .resolve_votes(&our_vote.unpack_votes().into_iter().cloned().collect())
                     .into_iter()
-                    .filter(|r| !super_majority_reconfigs.contains(r))
-                    .next()
-                    .is_some();
+                    .any(|r| !super_majority_reconfigs.contains(&r));
 
                 if we_have_comitted_to_reconfigs_not_in_super_majority {
                     println!("[MBR] We have committed to reconfigs that the super majority has not seen, waiting till we either have a split vote or SM/SM");
@@ -515,7 +513,6 @@ impl State {
             && !self.votes[&vote.voter].supersedes(&vote)
         {
             Err(Error::ExistingVoteIncompatibleWithNewVote {
-                vote: vote.clone(),
                 existing_vote: self.votes[&vote.voter].clone(),
             })
         } else if self.pending_gen == self.gen {
@@ -669,7 +666,7 @@ mod tests {
 
         pub fn deliver_packet_from_source(&mut self, source: Actor) {
             let packet = if let Some(packets) = self.packets.get_mut(&source) {
-                assert!(packets.len() > 0);
+                assert!(!packets.is_empty());
                 packets.remove(0)
             } else {
                 return;
@@ -722,7 +719,7 @@ mod tests {
                     }));
                 }
                 Err(Error::VoteFromNonMember { voter, members }) => {
-                    assert_eq!(members, dest_members.clone());
+                    assert_eq!(members, dest_members);
                     assert!(
                         !dest_members.contains(&voter),
                         "{:?} should not be in {:?}",
@@ -746,12 +743,12 @@ mod tests {
 
             let proc = self.procs.iter().find(|p| p.id.actor() == dest).unwrap();
             if !proc.faulty {
-                let (mut proc_members, gen) = (proc.members(proc.gen).unwrap().clone(), proc.gen);
+                let (mut proc_members, gen) = (proc.members(proc.gen).unwrap(), proc.gen);
 
                 let expected_members_at_gen = self
                     .members_at_gen
                     .entry(gen)
-                    .or_insert(proc_members.clone());
+                    .or_insert_with(|| proc_members.clone());
 
                 assert_eq!(expected_members_at_gen, &mut proc_members);
             }
@@ -764,8 +761,8 @@ mod tests {
         }
 
         pub fn drain_queued_packets(&mut self) {
-            while self.packets.len() > 0 {
-                let source = self.packets.keys().next().unwrap().clone();
+            while !self.packets.is_empty() {
+                let source = *self.packets.keys().next().unwrap();
                 self.deliver_packet_from_source(source);
             }
         }
@@ -1004,8 +1001,7 @@ msc {\n
 
             let joining_members: Vec<Actor> =
                 net.procs[nprocs..].iter().map(|p| p.id.actor()).collect();
-            for i in 0..nprocs {
-                let member = joining_members[i];
+            for (i, member) in joining_members.into_iter().enumerate() {
                 let a_i = net.procs[i].id.actor();
                 let packets = net.procs[i]
                     .propose(Reconfig::Join(member))
@@ -1060,8 +1056,7 @@ msc {\n
 
             let joining_members: Vec<Actor> =
                 net.procs[nprocs..].iter().map(|p| p.id.actor()).collect();
-            for i in 0..nprocs {
-                let member = joining_members[i];
+            for (i, member) in joining_members.into_iter().enumerate() {
                 let a_i = net.procs[i].id.actor();
                 let packets = net.procs[i]
                     .propose(Reconfig::Join(member))
@@ -1154,7 +1149,7 @@ msc {\n
                     net.enqueue_anti_entropy(i, j);
                 }
             }
-            if net.packets.len() == 0 {
+            if net.packets.is_empty() {
                 break;
             }
         }
@@ -1312,7 +1307,7 @@ msc {\n
                     net.enqueue_anti_entropy(i, j);
                 }
             }
-            if net.packets.len() == 0 {
+            if net.packets.is_empty() {
                 break;
             }
         }
@@ -1367,7 +1362,7 @@ msc {\n
                     net.enqueue_anti_entropy(i, j);
                 }
             }
-            if net.packets.len() == 0 {
+            if net.packets.is_empty() {
                 break;
             }
         }
@@ -1422,11 +1417,9 @@ msc {\n
                             Err(Error::VoteFromNonMember { .. }) => {
                                 assert!(!q.members(q.gen).unwrap().contains(&q.id.actor()));
                             }
-                            Err(Error::ExistingVoteIncompatibleWithNewVote { vote, existing_vote }) => {
+                            Err(Error::ExistingVoteIncompatibleWithNewVote { existing_vote }) => {
                                 // This proc has already committed to a vote this round
-                                assert_ne!(vote, existing_vote);
                                 assert_eq!(q.votes.get(&q.id.actor()), Some(&existing_vote));
-                                assert_eq!(vote.ballot, Ballot::Propose(reconfig));
                             }
                             Err(err) => {
                                 // invalid request.
@@ -1455,11 +1448,9 @@ msc {\n
                             Err(Error::VoteFromNonMember { .. }) => {
                                 assert!(!q.members(q.gen).unwrap().contains(&q.id.actor()));
                             }
-                            Err(Error::ExistingVoteIncompatibleWithNewVote { vote, existing_vote }) => {
+                            Err(Error::ExistingVoteIncompatibleWithNewVote { existing_vote }) => {
                                 // This proc has already committed to a vote
-                                assert_ne!(vote, existing_vote);
                                 assert_eq!(q.votes.get(&q.id.actor()), Some(&existing_vote));
-                                assert_eq!(vote.ballot, Ballot::Propose(reconfig));
                             }
                             Err(err) => {
                                 // invalid request.
@@ -1494,7 +1485,7 @@ msc {\n
                         net.enqueue_anti_entropy(i, j);
                     }
                 }
-                if net.packets.len() == 0 {
+                if net.packets.is_empty() {
                     break;
                 }
                 net.drain_queued_packets();
@@ -1552,22 +1543,9 @@ msc {\n
                 assert_ne!(reconfigs_applied, Default::default());
             }
 
-            // The last gen should have at least a super majority of nodes
-                    // The last gen should have at least a super majority of nodes
-            // let current_members: BTreeSet<_> =
-            //     procs_by_gen[max_gen].iter().map(|p| p.id.actor()).collect();
-
-            // for proc in procs_by_gen[max_gen].iter() {
-            //     assert_eq!(current_members, proc.members);
-            // }
-
-        let proc_at_max_gen = procs_by_gen[max_gen].iter().next().unwrap();
+            let proc_at_max_gen = procs_by_gen[max_gen].get(0).unwrap();
             assert!(super_majority(procs_by_gen[max_gen].len(), proc_at_max_gen.members(*max_gen).unwrap().len()), "{:?}", procs_by_gen);
 
-            // assert_eq!(net.pending_reconfigs, Default::default());
-
-            // ensure all procs are in the same generations
-            // ensure all procs agree on the same members
             TestResult::passed()
         }
 
@@ -1589,7 +1567,7 @@ msc {\n
             }
 
             let all_actors = {
-                let mut actors = trusted_actors.clone();
+                let mut actors = trusted_actors;
                 actors.push(Actor::default());
                 actors
             };
