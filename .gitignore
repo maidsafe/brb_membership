@@ -40,3 +40,6 @@ cargo-all.sh
 bindings
 tmp
 *.orig
+
+# Message Sequence Charts
+*.msc

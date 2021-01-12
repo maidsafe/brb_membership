@@ -440,13 +440,15 @@ impl State {
 
     fn is_split_vote(&self, votes: &BTreeSet<Vote>) -> Result<bool, Error> {
         let counts = self.count_votes(votes);
-        let votes_received: usize = counts.values().sum();
         let most_votes = counts.values().max().cloned().unwrap_or_default();
-        let n = self.members(self.gen)?.len();
-        let outstanding_votes = n - votes_received;
-        let predicted_votes = most_votes + outstanding_votes;
+        let members = self.members(self.gen)?;
+        let voters = &votes.iter().map(|v| v.voter).collect();
+        let remaining_voters = members.difference(&voters).count();
 
-        Ok(3 * votes_received > 2 * n && 3 * predicted_votes <= 2 * n)
+        // give the remaining votes to the reconfigs with the most votes.
+        let predicted_votes = most_votes + remaining_voters;
+
+        Ok(3 * voters.len() > 2 * members.len() && 3 * predicted_votes <= 2 * members.len())
     }
 
     fn is_super_majority(&self, votes: &BTreeSet<Vote>) -> Result<bool, Error> {
