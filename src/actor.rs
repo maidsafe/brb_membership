@@ -1,7 +1,8 @@
 use std::hash::Hash;
 use core::fmt::{Display, Debug};
 
-// use ed25519::{Keypair, PublicKey, Signature, Signer, Verifier};
+pub mod ed25519;
+
 use signature::{Signature, Signer, Verifier};
 use serde::Serialize;
 
@@ -14,21 +15,11 @@ T: Eq + Clone + Copy + Serialize + Verifier<S> + Default + Hash + Ord + Display 
 {
 }
 
-// (pub PublicKey);
-
-/*    
-    pub fn verify(&self, blob: impl Serialize, sig: &Sig) -> Result<bool, bincode::Error> {
-        let blob_bytes = bincode::serialize(&blob)?;
-        Ok(self.0.verify(&blob_bytes, &sig.0).is_ok())
-    }
-*/    
-
-pub trait SigningActor<S: Signature>: Actor<S> + Signer<S> + Default + Display + Debug {
-//    fn actor(&self) -> Actor;
+pub trait SigningActor<S: Signature>: Signer<S> + Default + Display + Debug {
 }
 
 impl<T, S: Signature> SigningActor<S> for T where
-T: Actor<S> + Signer<S> + Default + Display + Debug
+T: Signer<S> + Default + Display + Debug
 {
 }
 

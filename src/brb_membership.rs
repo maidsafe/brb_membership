@@ -10,7 +10,7 @@ pub type Generation = u64;
 
 #[derive(Debug, Default)]
 pub struct State<A, SA, S>
-where A: Ord + From<SA>, S: Ord
+where A: Ord, S: Ord, SA: AsRef<A>
 {
     pub id: SA,
     pub gen: Generation,
@@ -160,7 +160,7 @@ where A: Ord, S: Ord
 }
 
 impl<A, SA, S> State<A, SA, S> 
-where A: Actor<S> + From<SA>, SA: SigningActor<S>, S: Sig
+where A: Actor<S>, SA: SigningActor<S> + AsRef<A>, S: Sig
 {
     pub fn force_join(&mut self, actor: A) {
         let forced_reconfigs = self.forced_reconfigs.entry(self.gen).or_default();
@@ -259,7 +259,7 @@ where A: Actor<S> + From<SA>, SA: SigningActor<S>, S: Sig
             )?;
 
             
-            if let Some(our_vote) = self.votes.get(&self.id.clone().into()) {
+            if let Some(our_vote) = self.votes.get(self.id.as_ref()) {
                 let reconfigs_we_voted_for: BTreeSet<_> =
                     our_vote.reconfigs().into_iter().map(|(_, r)| r).collect();
                 let reconfigs_we_would_vote_for: BTreeSet<_> =
@@ -281,14 +281,14 @@ where A: Actor<S> + From<SA>, SA: SigningActor<S>, S: Sig
             println!("[MBR] Detected super majority over super majorities");
 
             // store a proof of what the network decided in our history so that we can onboard future procs.
-            let sm_vote = if self.members(self.gen)?.contains(&self.id.clone().into()) {
+            let sm_vote = if self.members(self.gen)?.contains(self.id.as_ref()) {
                 // we were a member during this generation, log the votes we have seen as our history.
                 let ballot =
                     Ballot::SuperMajority(self.votes.values().cloned().collect()).simplify();
 
                 let blob_bytes = bincode::serialize(&(&ballot, &self.pending_gen))?;
                 Some(Vote {
-                    voter: self.id.clone().into(),
+                    voter: self.id.as_ref().clone(),
                     sig: self.id.sign(&blob_bytes),
                     gen: self.pending_gen,
                     ballot,
@@ -319,7 +319,7 @@ where A: Actor<S> + From<SA>, SA: SigningActor<S>, S: Sig
         if self.is_super_majority(&self.votes.values().cloned().collect())? {
             println!("[MBR] Detected super majority");
 
-            if let Some(our_vote) = self.votes.get(&self.id.clone().into()) {
+            if let Some(our_vote) = self.votes.get(self.id.as_ref()) {
                 // We voted during this generation.
 
                 // We may have committed to some reconfigs that is not part of this super majority.
@@ -356,7 +356,7 @@ where A: Actor<S> + From<SA>, SA: SigningActor<S>, S: Sig
 
         // We have determined that we don't yet have enough votes to take action.
         // If we have not yet voted, this is where we would contribute our vote
-        if !self.votes.contains_key(&self.id.clone().into()) {
+        if !self.votes.contains_key(self.id.as_ref()) {
             let vote = self.build_vote(self.pending_gen, vote.ballot)?;
             return self.cast_vote(vote);
         }
@@ -367,7 +367,7 @@ where A: Actor<S> + From<SA>, SA: SigningActor<S>, S: Sig
     fn build_vote(&self, gen: Generation, ballot: Ballot<A, S>) -> Result<Vote<A, S>, Error<A, S>> {
         let blob_bytes = bincode::serialize(&(&ballot, &gen))?;
         Ok(Vote {
-            voter: self.id.clone().into(),
+            voter: self.id.as_ref().clone(),
             sig: self.id.sign(&blob_bytes),
             ballot,
             gen,
