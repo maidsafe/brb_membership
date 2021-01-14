@@ -4,17 +4,16 @@ mod net;
 use crate::net::{Net, Packet};
 
 //use brb_membership::{Actor, Ballot, Error, Generation, Reconfig, SigningActor, State, Vote};
+use brb_membership::actor::ed25519::{Actor, Sig, SigningActor};
+use brb_membership::{Generation, SigningActor as SigningActorTrait};
 use crdts::quickcheck::{quickcheck, Arbitrary, Gen, TestResult};
-use brb_membership::actor::ed25519::{Actor, SigningActor, Sig};
-use brb_membership::Generation;
+use signature::Signer;
 
-type VoteMsg = brb_membership::VoteMsg<Actor, Sig>;
 type Vote = brb_membership::Vote<Actor, Sig>;
-type State = brb_membership::State<Actor, SigningActor, Sig>;
+type State = brb_membership::State<Actor, brb_membership::actor::ed25519::SigningActor, Sig>;
 type Reconfig = brb_membership::Reconfig<Actor>;
 type Error = brb_membership::Error<Actor, Sig>;
 type Ballot = brb_membership::Ballot<Actor, Sig>;
-
 
 #[test]
 fn test_reject_changing_reconfig_when_one_is_in_progress() {
@@ -104,10 +103,10 @@ fn test_reject_leave_if_actor_is_not_a_member() {
     proc.force_join(proc.id.actor());
 
     let leaving_actor = Actor::default();
-    assert!(matches!(
-        proc.propose(Reconfig::Leave(leaving_actor)),
-        Err(Error::LeaveRequestForNonMember { .. })
-    ));
+    let resp = proc.propose(Reconfig::Leave(leaving_actor));
+    println!("Proc state {:#?}", proc);
+    println!("PROPOSE RESP: {:?}", resp);
+    assert!(matches!(resp, Err(Error::LeaveRequestForNonMember { .. })));
 }
 
 #[test]
@@ -168,7 +167,8 @@ fn test_reject_votes_with_invalid_signatures() {
     let ballot = Ballot::Propose(Reconfig::Join(Default::default()));
     let gen = proc.gen + 1;
     let voter = Default::default();
-    let sig = SigningActor::default().sign((&ballot, &gen)).unwrap();
+    let bytes = bincode::serialize(&(&ballot, &gen)).unwrap();
+    let sig = SigningActor::default().sign(&bytes);
     let resp = proc.handle_vote(Vote {
         ballot,
         gen,

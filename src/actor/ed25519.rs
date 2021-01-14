@@ -1,18 +1,30 @@
-use ed25519::{Keypair, PublicKey, Signature, Signer, Verifier, Sha512, Digest};
+use ed25519::{Digest, Keypair, PublicKey, Sha512, Signature, Signer, Verifier};
 use serde::{Deserialize, Serialize};
 
-use std::convert::TryInto;
-use std::hash::{Hash, Hasher};
-use std::fmt;
-use std::cmp::{Eq, Ord, Ordering, PartialEq, PartialOrd};
 use rand::rngs::OsRng;
+use std::cmp::{Eq, Ord, Ordering, PartialEq, PartialOrd};
+use std::convert::TryInto;
+use std::fmt;
+use std::hash::{Hash, Hasher};
 
-#[derive(Clone, Copy, Serialize, Deserialize, Debug, Default)]
+const CONTEXT: &[u8] = b"BRBEd25519DalekSignerPrehashedContext";
+
+#[derive(Clone, Copy, Serialize, Deserialize, Debug)]
 pub struct Actor(pub PublicKey);
+
+impl Default for Actor {
+    fn default() -> Self {
+        use crate::SigningActor as SigningActorTrait;
+        SigningActor::default().actor()
+    }
+}
 
 impl Verifier<Sig> for Actor {
     fn verify(&self, msg: &[u8], signature: &Sig) -> Result<(), signature::Error> {
-        self.0.verify_strict(msg, &signature.0)
+        let mut prehashed: Sha512 = Sha512::new();
+        prehashed.update(msg);
+        self.0
+            .verify_prehashed(prehashed, Some(CONTEXT), &signature.0)
     }
 }
 
@@ -48,21 +60,22 @@ impl PartialEq for Actor {
 
 impl Eq for Actor {}
 
-
-
 #[derive(Debug)]
 pub struct SigningActor(pub Keypair);
 
 impl Signer<Sig> for SigningActor {
-
     fn try_sign(&self, msg: &[u8]) -> Result<Sig, signature::Error> {
         let mut prehashed: Sha512 = Sha512::new();
         prehashed.update(msg);
-        let context: &[u8] = b"BRBEd25519DalekSignerPrehashedContext";
-        let sig: Signature = self.0.sign_prehashed(prehashed, Some(context))?;
+        let sig: Signature = self.0.sign_prehashed(prehashed, Some(CONTEXT))?;
         Ok(Sig(sig))
     }
+}
 
+impl crate::SigningActor<Actor, Sig> for SigningActor {
+    fn actor(&self) -> Actor {
+        Actor(self.0.public.clone())
+    }
 }
 
 impl fmt::Display for SigningActor {
@@ -73,19 +86,17 @@ impl fmt::Display for SigningActor {
 
 impl Default for SigningActor {
     fn default() -> Self {
-        let mut csprng = OsRng{};
-        Self(Keypair::generate(&mut csprng))
+        Self(Keypair::generate(&mut OsRng))
     }
 }
 
-/*
-impl AsRef<Actor> for SigningActor {
-    fn as_ref(&self) -> &Actor {
-		&Actor(self.0.public)
+impl PartialEq for SigningActor {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.to_bytes() == other.0.to_bytes()
     }
 }
-*/
 
+impl Eq for SigningActor {}
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug)]
 pub struct Sig(pub Signature);
@@ -100,10 +111,9 @@ impl signature::Signature for Sig {
 
 impl AsRef<[u8]> for Sig {
     fn as_ref(&self) -> &[u8] {
-		&self.0.as_ref()
+        &self.0.as_ref()
     }
 }
-
 
 impl Hash for Sig {
     fn hash<H: Hasher>(&self, state: &mut H) {

@@ -1,15 +1,17 @@
+use core::fmt::Debug;
 use std::collections::BTreeSet;
 use thiserror::Error;
-use core::fmt::Debug;
 
 use crate::{Ballot, Generation, Reconfig, Vote};
 
 #[derive(Error, Debug)]
-pub enum Error<A, S> 
-where A: Ord + Debug, S: Ord + Debug
+pub enum Error<A, S>
+where
+    A: Ord + Debug,
+    S: Ord + Debug,
 {
     #[error("Vote has an invalid signature")]
-    InvalidSignature (#[from] signature::Error),
+    InvalidSignature(#[from] signature::Error),
     #[error("Packet was not destined for this actor: {dest:?} != {actor:?}")]
     WrongDestination { dest: A, actor: A },
     #[error(
@@ -19,15 +21,9 @@ where A: Ord + Debug, S: Ord + Debug
     #[error(
         "An existing member `{requester:?}` can not request to join again. (members: {members:?})"
     )]
-    JoinRequestForExistingMember {
-        requester: A,
-        members: BTreeSet<A>,
-    },
+    JoinRequestForExistingMember { requester: A, members: BTreeSet<A> },
     #[error("You must be a member to request to leave ({requester:?} not in {members:?})")]
-    LeaveRequestForNonMember {
-        requester: A,
-        members: BTreeSet<A>,
-    },
+    LeaveRequestForNonMember { requester: A, members: BTreeSet<A> },
     #[error("A vote is always for the next generation: vote gen {vote_gen} != {gen} + 1")]
     VoteNotForNextGeneration {
         vote_gen: Generation,
@@ -35,10 +31,7 @@ where A: Ord + Debug, S: Ord + Debug
         pending_gen: Generation,
     },
     #[error("Vote from non member ({voter:?} not in {members:?})")]
-    VoteFromNonMember {
-        voter: A,
-        members: BTreeSet<A>,
-    },
+    VoteFromNonMember { voter: A, members: BTreeSet<A> },
     #[error("Voter changed their mind: {reconfigs:?}")]
     VoterChangedMind {
         reconfigs: BTreeSet<(A, Reconfig<A>)>,
