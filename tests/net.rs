@@ -3,11 +3,11 @@ use std::fs::File;
 use std::io::Write;
 
 //use brb_membership::{Error, Generation, Reconfig, State, VoteMsg};
-use brb_membership::Generation;
-use brb_membership::actor::ed25519::{Actor, SigningActor, Sig};
+use brb_membership::actor::ed25519::{Actor, Sig};
+use brb_membership::{Generation, SigningActor};
 
 type VoteMsg = brb_membership::VoteMsg<Actor, Sig>;
-type State = brb_membership::State<Actor, SigningActor, Sig>;
+type State = brb_membership::State<Actor, brb_membership::actor::ed25519::SigningActor, Sig>;
 type Reconfig = brb_membership::Reconfig<Actor>;
 type Error = brb_membership::Error<Actor, Sig>;
 
