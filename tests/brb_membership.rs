@@ -3,8 +3,18 @@ use std::collections::{BTreeMap, BTreeSet};
 mod net;
 use crate::net::{Net, Packet};
 
-use brb_membership::{Actor, Ballot, Error, Generation, Reconfig, SigningActor, State, Vote};
+//use brb_membership::{Actor, Ballot, Error, Generation, Reconfig, SigningActor, State, Vote};
 use crdts::quickcheck::{quickcheck, Arbitrary, Gen, TestResult};
+use brb_membership::actor::ed25519::{Actor, SigningActor, Sig};
+use brb_membership::Generation;
+
+type VoteMsg = brb_membership::VoteMsg<Actor, Sig>;
+type Vote = brb_membership::Vote<Actor, Sig>;
+type State = brb_membership::State<Actor, SigningActor, Sig>;
+type Reconfig = brb_membership::Reconfig<Actor>;
+type Error = brb_membership::Error<Actor, Sig>;
+type Ballot = brb_membership::Ballot<Actor, Sig>;
+
 
 #[test]
 fn test_reject_changing_reconfig_when_one_is_in_progress() {
@@ -166,7 +176,7 @@ fn test_reject_votes_with_invalid_signatures() {
         sig,
     });
 
-    assert!(matches!(resp, Err(Error::InvalidSignature)));
+    assert!(matches!(resp, Err(Error::InvalidSignature(_))));
 }
 
 #[test]
