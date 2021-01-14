@@ -8,3 +8,5 @@ pub use crate::error::Error;
 
 pub mod actor;
 pub use actor::{Actor, Sig, SigningActor};
+
+pub mod ed25519_actor;

@@ -1,29 +1,32 @@
 use std::collections::BTreeSet;
 use thiserror::Error;
+use core::fmt::Debug;
 
-use crate::{Actor, Ballot, Generation, Reconfig, Vote};
+use crate::{Ballot, Generation, Reconfig, Vote};
 
 #[derive(Error, Debug)]
-pub enum Error {
+pub enum Error<A, S> 
+where A: Ord + Debug, S: Ord + Debug
+{
     #[error("Vote has an invalid signature")]
-    InvalidSignature,
-    #[error("Packet was not destined for this actor: {dest} != {actor}")]
-    WrongDestination { dest: Actor, actor: Actor },
+    InvalidSignature (#[from] signature::Error),
+    #[error("Packet was not destined for this actor: {dest:?} != {actor:?}")]
+    WrongDestination { dest: A, actor: A },
     #[error(
         "We can not accept any new join requests, network member size is at capacity: {members:?}"
     )]
-    MembersAtCapacity { members: BTreeSet<Actor> },
+    MembersAtCapacity { members: BTreeSet<A> },
     #[error(
-        "An existing member `{requester}` can not request to join again. (members: {members:?})"
+        "An existing member `{requester:?}` can not request to join again. (members: {members:?})"
     )]
     JoinRequestForExistingMember {
-        requester: Actor,
-        members: BTreeSet<Actor>,
+        requester: A,
+        members: BTreeSet<A>,
     },
-    #[error("You must be a member to request to leave ({requester} not in {members:?})")]
+    #[error("You must be a member to request to leave ({requester:?} not in {members:?})")]
     LeaveRequestForNonMember {
-        requester: Actor,
-        members: BTreeSet<Actor>,
+        requester: A,
+        members: BTreeSet<A>,
     },
     #[error("A vote is always for the next generation: vote gen {vote_gen} != {gen} + 1")]
     VoteNotForNextGeneration {
@@ -31,26 +34,26 @@ pub enum Error {
         gen: Generation,
         pending_gen: Generation,
     },
-    #[error("Vote from non member ({voter} not in {members:?})")]
+    #[error("Vote from non member ({voter:?} not in {members:?})")]
     VoteFromNonMember {
-        voter: Actor,
-        members: BTreeSet<Actor>,
+        voter: A,
+        members: BTreeSet<A>,
     },
     #[error("Voter changed their mind: {reconfigs:?}")]
     VoterChangedMind {
-        reconfigs: BTreeSet<(Actor, Reconfig)>,
+        reconfigs: BTreeSet<(A, Reconfig<A>)>,
     },
     #[error("Existing vote {existing_vote:?} not compatible with new vote")]
-    ExistingVoteIncompatibleWithNewVote { existing_vote: Vote },
+    ExistingVoteIncompatibleWithNewVote { existing_vote: Vote<A, S> },
     #[error("The super majority ballot does not actually have supermajority: {ballot:?} (members: {members:?})")]
     SuperMajorityBallotIsNotSuperMajority {
-        ballot: Ballot,
-        members: BTreeSet<Actor>,
+        ballot: Ballot<A, S>,
+        members: BTreeSet<A>,
     },
     #[error("Invalid generation {0}")]
     InvalidGeneration(Generation),
     #[error("History contains an invalid vote {0:?}")]
-    InvalidVoteInHistory(Vote),
+    InvalidVoteInHistory(Vote<A, S>),
     #[error("Failed to encode with bincode")]
     Encoding(#[from] bincode::Error),
 }
