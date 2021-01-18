@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Actor, Error, Sig, SigningActor};
 use core::fmt::Debug;
+use log::info;
 
 const SOFT_MAX_MEMBERS: usize = 7;
 pub type Generation = u64;
@@ -258,7 +259,7 @@ where
     }
 
     pub fn anti_entropy(&self, from_gen: Generation, actor: A) -> Vec<VoteMsg<A, S>> {
-        println!(
+        info!(
             "[MBR] anti-entropy for {:?}.{} from {:?}",
             actor, from_gen, self.id
         );
@@ -282,7 +283,7 @@ where
         self.pending_gen = vote.gen;
 
         if self.is_split_vote(&self.votes.values().cloned().collect())? {
-            println!("[MBR] Detected split vote");
+            info!("[MBR] Detected split vote");
             let merge_vote = self.build_vote(
                 self.pending_gen,
                 Ballot::Merge(self.votes.values().cloned().collect()).simplify(),
@@ -295,19 +296,17 @@ where
                     merge_vote.reconfigs().into_iter().map(|(_, r)| r).collect();
 
                 if reconfigs_we_voted_for == reconfigs_we_would_vote_for {
-                    println!(
-                        "[MBR] This vote didn't add new information, waiting for more votes..."
-                    );
+                    info!("[MBR] This vote didn't add new information, waiting for more votes...");
                     return Ok(vec![]);
                 }
             }
 
-            println!("[MBR] Either we haven't voted or our previous vote didn't fully overlap, merge them.");
+            info!("[MBR] Either we haven't voted or our previous vote didn't fully overlap, merge them.");
             return self.cast_vote(merge_vote);
         }
 
         if self.is_super_majority_over_super_majorities(&self.votes.values().cloned().collect())? {
-            println!("[MBR] Detected super majority over super majorities");
+            info!("[MBR] Detected super majority over super majorities");
 
             // store a proof of what the network decided in our history so that we can onboard future procs.
             let sm_vote = if self.members(self.gen)?.contains(&self.id.actor()) {
@@ -328,7 +327,7 @@ where
                     &vote.unpack_votes().into_iter().cloned().collect(),
                 )?;
                 if should_add_vote_to_history {
-                    println!("[MBR] Adding vote to history");
+                    info!("[MBR] Adding vote to history");
                     Some(vote)
                 } else {
                     None
@@ -346,7 +345,7 @@ where
         }
 
         if self.is_super_majority(&self.votes.values().cloned().collect())? {
-            println!("[MBR] Detected super majority");
+            info!("[MBR] Detected super majority");
 
             if let Some(our_vote) = self.votes.get(&self.id.actor()) {
                 // We voted during this generation.
@@ -367,15 +366,15 @@ where
                     .any(|r| !super_majority_reconfigs.contains(&r));
 
                 if we_have_comitted_to_reconfigs_not_in_super_majority {
-                    println!("[MBR] We have committed to reconfigs that the super majority has not seen, waiting till we either have a split vote or SM/SM");
+                    info!("[MBR] We have committed to reconfigs that the super majority has not seen, waiting till we either have a split vote or SM/SM");
                     return Ok(vec![]);
                 } else if our_vote.is_super_majority_ballot() {
-                    println!("[MBR] We've already sent a super majority, waiting till we either have a split vote or SM / SM");
+                    info!("[MBR] We've already sent a super majority, waiting till we either have a split vote or SM / SM");
                     return Ok(vec![]);
                 }
             }
 
-            println!("[MBR] broadcasting super majority");
+            info!("[MBR] broadcasting super majority");
             let vote = self.build_vote(
                 self.pending_gen,
                 Ballot::SuperMajority(self.votes.values().cloned().collect()).simplify(),
