@@ -9,3 +9,4 @@ pub use crate::error::Error;
 pub mod actor;
 pub use actor::{Actor, Sig, SigningActor};
 
+pub use signature;
