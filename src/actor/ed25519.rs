@@ -9,7 +9,7 @@ use std::hash::{Hash, Hasher};
 
 const CONTEXT: &[u8] = b"BRBEd25519DalekSignerPrehashedContext";
 
-#[derive(Clone, Copy, Serialize, Deserialize, Debug)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct Actor(pub PublicKey);
 
 impl Default for Actor {
@@ -36,7 +36,14 @@ impl Hash for Actor {
 
 impl fmt::Display for Actor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "({:?})", self.0)
+        let bytes = self.0.to_bytes();
+        write!(f, "i:{}", hex::encode(&bytes[..3]))
+    }
+}
+
+impl fmt::Debug for Actor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self, f)
     }
 }
 
@@ -60,7 +67,6 @@ impl PartialEq for Actor {
 
 impl Eq for Actor {}
 
-#[derive(Debug)]
 pub struct SigningActor(pub Keypair);
 
 impl Signer<Sig> for SigningActor {
@@ -74,13 +80,20 @@ impl Signer<Sig> for SigningActor {
 
 impl crate::SigningActor<Actor, Sig> for SigningActor {
     fn actor(&self) -> Actor {
-        Actor(self.0.public.clone())
+        Actor(self.0.public)
     }
 }
 
 impl fmt::Display for SigningActor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "({:?})", self.0)
+        let bytes = self.0.to_bytes();
+        write!(f, "SA:{}", hex::encode(&bytes[..3]))
+    }
+}
+
+impl fmt::Debug for SigningActor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self, f)
     }
 }
 
@@ -98,7 +111,7 @@ impl PartialEq for SigningActor {
 
 impl Eq for SigningActor {}
 
-#[derive(Clone, Copy, Serialize, Deserialize, Debug)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct Sig(pub Signature);
 
 impl signature::Signature for Sig {
@@ -123,7 +136,14 @@ impl Hash for Sig {
 
 impl fmt::Display for Sig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "({:?})", self.0)
+        let bytes = self.0.to_bytes();
+        write!(f, "sig:{}", hex::encode(&bytes[..3]))
+    }
+}
+
+impl fmt::Debug for Sig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self, f)
     }
 }
 
