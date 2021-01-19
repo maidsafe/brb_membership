@@ -1,9 +1,11 @@
 [package]
 name = "brb_membership"
 version = "1.0.1"
+description = "BRB Membership: Enables nodes to dynamically join and leave a BRB voting group"
 authors = [ "David Rusu <davidrusu.me@gmail.com>" ]
-edition = "2018"
 license = "MIT OR BSD-3-Clause"
+repository = "https://github.com/maidsafe/brb_membership"
+edition = "2018"
 
 [dependencies]
 crdts = "5.0.0"
@@ -15,7 +17,7 @@ thiserror = "1.0"
 signature = "1.3.0"
 log = "0.4.13"
 
-  [dependencies.ed25519]
-  version = "1.0.0"
-  package = "ed25519-dalek"
-  features = [ "serde" ]
+[dependencies.ed25519]
+version = "1.0.0"
+package = "ed25519-dalek"
+features = [ "serde" ]
