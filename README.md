@@ -26,7 +26,7 @@ mscgen -T png -i round_robin_split_vote_2.msc -o round_robin_split_vote_2.png
 
 The rendered chart `round_robin_split_vote_2.png` will look something like the following:
 
-![round robin split vote with 2 members](docs/round_robin_split_vote_2.png)
+![round robin split vote with 2 members](./docs/round_robin_split_vote_2.png)
 
 Note that although the lines between network members are perfectly horizontal, this does not mean that the packet was sent at that time, only that this is when the destination member received the vote.
 
