@@ -3,13 +3,15 @@ use std::fs::File;
 use std::io::Write;
 
 //use brb_membership::{Error, Generation, Reconfig, State, VoteMsg};
-use brb_membership::actor::ed25519::{Actor, Sig};
-use brb_membership::{Generation, SigningActor};
+pub use brb_membership::actor::ed25519::{Actor, Sig, SigningActor};
+use brb_membership::{Generation, SigningActor as SigningActorTrait};
 
-type VoteMsg = brb_membership::VoteMsg<Actor, Sig>;
-type State = brb_membership::State<Actor, brb_membership::actor::ed25519::SigningActor, Sig>;
-type Reconfig = brb_membership::Reconfig<Actor>;
-type Error = brb_membership::Error<Actor, Sig>;
+pub type Vote = brb_membership::Vote<Actor, Sig>;
+pub type VoteMsg = brb_membership::VoteMsg<Actor, Sig>;
+pub type State = brb_membership::State<Actor, brb_membership::actor::ed25519::SigningActor, Sig>;
+pub type Reconfig = brb_membership::Reconfig<Actor>;
+pub type Error = brb_membership::Error<Actor, Sig>;
+pub type Ballot = brb_membership::Ballot<Actor, Sig>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Packet {
@@ -160,7 +162,7 @@ impl Net {
         ));
     }
 
-    pub fn generate_msc(&self, name: &str) {
+    pub fn generate_msc(&self, name: &str) -> Result<(), Error> {
         // See: http://www.mcternan.me.uk/mscgen/
         let mut msc = String::from(
             "
@@ -195,7 +197,8 @@ msc {\n
             msc = msc.replace(&proc_id_as_str, &format!("{}", idx + 1));
         }
 
-        let mut msc_file = File::create(name).unwrap();
-        msc_file.write_all(msc.as_bytes()).unwrap();
+        let mut msc_file = File::create(name)?;
+        msc_file.write_all(msc.as_bytes())?;
+        Ok(())
     }
 }
