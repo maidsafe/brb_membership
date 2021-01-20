@@ -63,3 +63,9 @@ impl<A: Ord + Debug, S: Ord + Debug> From<String> for Error<A, S> {
         Error::Other(v)
     }
 }
+
+impl<A: Ord + Debug, S: Ord + Debug> From<&'static str> for Error<A, S> {
+    fn from(v: &'static str) -> Self {
+        v.to_string().into()
+    }
+}
