@@ -10,6 +10,8 @@ where
     A: Ord + Debug,
     S: Ord + Debug,
 {
+    #[error("We experienced an IO error")]
+    IO(#[from] std::io::Error),
     #[error("The operation requested assumes we have at least one member")]
     NoMembers,
     #[error("Vote has an invalid signature")]

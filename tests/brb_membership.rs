@@ -1,19 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 mod net;
-use crate::net::{Net, Packet};
+use crate::net::{Actor, Ballot, Error, Net, Packet, Reconfig, SigningActor, State, Vote};
 
-//use brb_membership::{Actor, Ballot, Error, Generation, Reconfig, SigningActor, State, Vote};
-use brb_membership::actor::ed25519::{Actor, Sig, SigningActor};
 use brb_membership::{Generation, SigningActor as SigningActorTrait};
 use crdts::quickcheck::{quickcheck, Arbitrary, Gen, TestResult};
 use signature::Signer;
-
-type Vote = brb_membership::Vote<Actor, Sig>;
-type State = brb_membership::State<Actor, brb_membership::actor::ed25519::SigningActor, Sig>;
-type Reconfig = brb_membership::Reconfig<Actor>;
-type Error = brb_membership::Error<Actor, Sig>;
-type Ballot = brb_membership::Ballot<Actor, Sig>;
 
 #[test]
 fn test_reject_changing_reconfig_when_one_is_in_progress() -> Result<(), Error> {
@@ -276,7 +268,7 @@ fn test_round_robin_split_vote() -> Result<(), Error> {
         }
         net.drain_queued_packets()?;
 
-        net.generate_msc(&format!("round_robin_split_vote_{}.msc", nprocs));
+        net.generate_msc(&format!("round_robin_split_vote_{}.msc", nprocs))?;
 
         let proc_0_gen = net.procs[0].gen;
         let expected_members = net.procs[0].members(proc_0_gen).unwrap();
@@ -349,7 +341,7 @@ fn test_onboarding_across_many_generations() -> Result<(), Error> {
 
     let mut procs_by_gen: BTreeMap<Generation, Vec<State>> = Default::default();
 
-    net.generate_msc("onboarding.msc");
+    net.generate_msc("onboarding.msc")?;
 
     for proc in net.procs {
         procs_by_gen.entry(proc.gen).or_default().push(proc);
@@ -389,7 +381,7 @@ fn test_simple_proposal() -> Result<(), Error> {
     net.enqueue_packets(packets);
     net.drain_queued_packets()?;
 
-    net.generate_msc("simple_join.msc");
+    net.generate_msc("simple_join.msc")?;
 
     Ok(())
 }
