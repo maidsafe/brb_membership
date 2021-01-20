@@ -10,6 +10,8 @@ where
     A: Ord + Debug,
     S: Ord + Debug,
 {
+    #[error("The operation requested assumes we have at least one member")]
+    NoMembers,
     #[error("Vote has an invalid signature")]
     InvalidSignature(#[from] signature::Error),
     #[error("Packet was not destined for this actor: {dest:?} != {actor:?}")]

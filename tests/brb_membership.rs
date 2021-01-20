@@ -16,18 +16,19 @@ type Error = brb_membership::Error<Actor, Sig>;
 type Ballot = brb_membership::Ballot<Actor, Sig>;
 
 #[test]
-fn test_reject_changing_reconfig_when_one_is_in_progress() {
+fn test_reject_changing_reconfig_when_one_is_in_progress() -> Result<(), Error> {
     let mut proc = State::default();
     proc.force_join(proc.id.actor());
-    assert!(proc.propose(Reconfig::Join(Actor::default())).is_ok());
+    proc.propose(Reconfig::Join(Actor::default()))?;
     assert!(matches!(
         proc.propose(Reconfig::Join(Actor::default())),
         Err(Error::ExistingVoteIncompatibleWithNewVote { .. })
     ));
+    Ok(())
 }
 
 #[test]
-fn test_reject_vote_from_non_member() {
+fn test_reject_vote_from_non_member() -> Result<(), Error> {
     let mut net = Net::with_procs(2);
     net.procs[1].faulty = true;
     let p0 = net.procs[0].id.actor();
@@ -35,13 +36,13 @@ fn test_reject_vote_from_non_member() {
     net.force_join(p1, p0);
     net.force_join(p1, p1);
 
-    let resp = net.procs[1].propose(Reconfig::Join(Default::default()));
-    assert!(resp.is_ok());
-    net.enqueue_packets(resp.unwrap().into_iter().map(|vote_msg| Packet {
+    let resp = net.procs[1].propose(Reconfig::Join(Default::default()))?;
+    net.enqueue_packets(resp.into_iter().map(|vote_msg| Packet {
         source: p1,
         vote_msg,
     }));
     net.drain_queued_packets();
+    Ok(())
 }
 
 #[test]
@@ -557,13 +558,13 @@ fn test_prop_interpreter_qc2() {
 }
 
 quickcheck! {
-    fn prop_interpreter(n: usize, instructions: Vec<Instruction>) -> TestResult {
+    fn prop_interpreter(n: usize, instructions: Vec<Instruction>) -> Result<TestResult, Error> {
         fn super_majority(m: usize, n: usize) -> bool {
             3 * m > 2 * n
         }
         let n = n.min(7);
         if n == 0 || instructions.len() > 12{
-            return TestResult::discard();
+            return Ok(TestResult::discard());
         }
 
         println!("--------------------------------------");
@@ -571,7 +572,7 @@ quickcheck! {
         let mut net = Net::with_procs(n);
 
         // Assume procs[0] is the genesis proc. (trusts itself)
-        let gen_proc = net.genesis();
+        let gen_proc = net.genesis()?;
         for proc in net.procs.iter_mut() {
             proc.force_join(gen_proc);
         }
@@ -729,7 +730,7 @@ quickcheck! {
         let proc_at_max_gen = procs_by_gen[max_gen].get(0).unwrap();
         assert!(super_majority(procs_by_gen[max_gen].len(), proc_at_max_gen.members(*max_gen).unwrap().len()), "{:?}", procs_by_gen);
 
-        TestResult::passed()
+        Ok(TestResult::passed())
     }
 
     fn prop_validate_reconfig(join_or_leave: bool, actor_idx: usize, members: u8) -> TestResult {
