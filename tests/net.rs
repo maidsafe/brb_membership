@@ -137,7 +137,7 @@ impl Net {
     }
 
     pub fn purge_empty_queues(&mut self) {
-        self.packets = core::mem::replace(&mut self.packets, Default::default())
+        self.packets = core::mem::take(&mut self.packets)
             .into_iter()
             .filter(|(_, queue)| !queue.is_empty())
             .collect();
