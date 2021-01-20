@@ -355,10 +355,7 @@ fn test_onboarding_across_many_generations() -> Result<(), Error> {
         procs_by_gen.entry(proc.gen).or_default().push(proc);
     }
 
-    let max_gen = procs_by_gen
-        .keys()
-        .last()
-        .ok_or("No generations logged".to_string())?;
+    let max_gen = procs_by_gen.keys().last().ok_or("No generations logged")?;
     // The last gen should have at least a super majority of nodes
     let current_members: BTreeSet<_> = procs_by_gen[max_gen].iter().map(|p| p.id.actor()).collect();
 
@@ -689,7 +686,7 @@ quickcheck! {
             procs_by_gen.entry(proc.gen).or_default().push(proc);
         }
 
-        let max_gen = procs_by_gen.keys().last().ok_or("No generations logged".to_string())?;
+        let max_gen = procs_by_gen.keys().last().ok_or("No generations logged")?;
 
         // And procs at each generation should have agreement on members
         for (gen, procs) in procs_by_gen.iter() {
