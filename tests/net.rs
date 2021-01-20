@@ -98,9 +98,7 @@ impl Net {
                 assert_eq!(dest_proc.gen, gen);
                 assert_eq!(dest_proc.pending_gen, pending_gen);
             }
-            Err(err) => {
-                panic!("Unexpected err: {:?} {:?}", err, self);
-            }
+            Err(err) => return Err(err),
         }
 
         match self.procs.iter().find(|p| p.id.actor() == dest) {

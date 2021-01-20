@@ -53,4 +53,13 @@ where
     InvalidVoteInHistory(Vote<A, S>),
     #[error("Failed to encode with bincode")]
     Encoding(#[from] bincode::Error),
+
+    #[error("{0}")]
+    Other(String),
+}
+
+impl<A: Ord + Debug, S: Ord + Debug> From<String> for Error<A, S> {
+    fn from(v: String) -> Self {
+        Error::Other(v)
+    }
 }

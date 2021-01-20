@@ -38,7 +38,7 @@ fn test_reject_vote_from_non_member() -> Result<(), Error> {
 }
 
 #[test]
-fn test_reject_new_join_if_we_are_at_capacity() {
+fn test_reject_new_join_if_we_are_at_capacity() -> Result<(), Error> {
     let mut proc = State {
         forced_reconfigs: vec![(
             0,
@@ -55,15 +55,18 @@ fn test_reject_new_join_if_we_are_at_capacity() {
         Err(Error::MembersAtCapacity { .. })
     ));
 
-    assert!(proc
-        .propose(Reconfig::Leave(
-            proc.members(proc.gen).unwrap().into_iter().next().unwrap()
-        ))
-        .is_ok())
+    let leaving_member = proc
+        .members(proc.gen)?
+        .get(0)
+        .into_iter()
+        .next()
+        .ok_or(Error::NoMembers)?;
+    proc.propose(Reconfig::Leave(leaving_member))?;
+    Ok(())
 }
 
 #[test]
-fn test_reject_join_if_actor_is_already_a_member() {
+fn test_reject_join_if_actor_is_already_a_member() -> Result<(), Error> {
     let mut proc = State {
         forced_reconfigs: vec![(
             0,
@@ -75,11 +78,16 @@ fn test_reject_join_if_actor_is_already_a_member() {
     };
     proc.force_join(proc.id.actor());
 
-    let member = proc.members(proc.gen).unwrap().into_iter().next().unwrap();
+    let member = proc
+        .members(proc.gen)?
+        .into_iter()
+        .next()
+        .ok_or(Error::NoMembers)?;
     assert!(matches!(
         proc.propose(Reconfig::Join(member)),
         Err(Error::JoinRequestForExistingMember { .. })
     ));
+    Ok(())
 }
 
 #[test]
@@ -97,8 +105,6 @@ fn test_reject_leave_if_actor_is_not_a_member() {
 
     let leaving_actor = Actor::default();
     let resp = proc.propose(Reconfig::Leave(leaving_actor));
-    println!("Proc state {:#?}", proc);
-    println!("PROPOSE RESP: {:?}", resp);
     assert!(matches!(resp, Err(Error::LeaveRequestForNonMember { .. })));
 }
 
@@ -113,8 +119,7 @@ fn test_handle_vote_rejects_packet_from_previous_gen() -> Result<(), Error> {
     net.procs[1].force_join(a_1);
 
     let packets = net.procs[0]
-        .propose(Reconfig::Join(Actor::default()))
-        .unwrap()
+        .propose(Reconfig::Join(Actor::default()))?
         .into_iter()
         .map(|vote_msg| Packet {
             source: a_0,
@@ -122,9 +127,8 @@ fn test_handle_vote_rejects_packet_from_previous_gen() -> Result<(), Error> {
         })
         .collect::<Vec<_>>();
 
-    let mut stale_packets = net.procs[1]
-        .propose(Reconfig::Join(Actor::default()))
-        .unwrap()
+    let stale_packets = net.procs[1]
+        .propose(Reconfig::Join(Actor::default()))?
         .into_iter()
         .map(|vote_msg| Packet {
             source: a_1,
@@ -141,28 +145,28 @@ fn test_handle_vote_rejects_packet_from_previous_gen() -> Result<(), Error> {
     net.enqueue_packets(packets);
     net.drain_queued_packets()?;
 
-    println!("net: {:#?}", net);
-    let vote = stale_packets.pop().unwrap().vote_msg.vote;
-
-    assert!(matches!(
-        net.procs[0].handle_vote(vote),
-        Err(Error::VoteNotForNextGeneration {
-            vote_gen: 1,
-            gen: 1,
-            pending_gen: 1,
-        })
-    ));
+    for packet in stale_packets {
+        let vote = packet.vote_msg.vote;
+        assert!(matches!(
+            net.procs[0].handle_vote(vote),
+            Err(Error::VoteNotForNextGeneration {
+                vote_gen: 1,
+                gen: 1,
+                pending_gen: 1,
+            })
+        ));
+    }
 
     Ok(())
 }
 
 #[test]
-fn test_reject_votes_with_invalid_signatures() {
+fn test_reject_votes_with_invalid_signatures() -> Result<(), Error> {
     let mut proc = State::default();
     let ballot = Ballot::Propose(Reconfig::Join(Default::default()));
     let gen = proc.gen + 1;
     let voter = Default::default();
-    let bytes = bincode::serialize(&(&ballot, &gen)).unwrap();
+    let bytes = bincode::serialize(&(&ballot, &gen))?;
     let sig = SigningActor::default().sign(&bytes);
     let resp = proc.handle_vote(Vote {
         ballot,
@@ -172,6 +176,7 @@ fn test_reject_votes_with_invalid_signatures() {
     });
 
     assert!(matches!(resp, Err(Error::InvalidSignature(_))));
+    Ok(())
 }
 
 #[test]
@@ -190,8 +195,7 @@ fn test_split_vote() -> Result<(), Error> {
         for (i, member) in joining_members.into_iter().enumerate() {
             let a_i = net.procs[i].id.actor();
             let packets = net.procs[i]
-                .propose(Reconfig::Join(member))
-                .unwrap()
+                .propose(Reconfig::Join(member))?
                 .into_iter()
                 .map(|vote_msg| Packet {
                     source: a_i,
@@ -210,18 +214,23 @@ fn test_split_vote() -> Result<(), Error> {
         net.drain_queued_packets()?;
 
         let proc0_gen = net.procs[0].gen;
-        let expected_members = net.procs[0].members(proc0_gen).unwrap();
+        let expected_members = net.procs[0].members(proc0_gen)?;
         assert!(expected_members.len() > nprocs);
 
         for i in 0..nprocs {
             let proc_i_gen = net.procs[i].gen;
             assert_eq!(proc_i_gen, proc0_gen);
-            assert_eq!(net.procs[i].members(proc_i_gen).unwrap(), expected_members);
+            assert_eq!(net.procs[i].members(proc_i_gen)?, expected_members);
         }
 
         for member in expected_members.iter() {
-            let p = net.procs.iter().find(|p| &p.id.actor() == member).unwrap();
-            assert_eq!(p.members(p.gen).unwrap(), expected_members);
+            let p = net
+                .procs
+                .iter()
+                .find(|p| &p.id.actor() == member)
+                .ok_or(format!("Could not find process with id {:?}", member))?;
+
+            assert_eq!(p.members(p.gen)?, expected_members);
         }
     }
 
@@ -244,8 +253,7 @@ fn test_round_robin_split_vote() -> Result<(), Error> {
         for (i, member) in joining_members.into_iter().enumerate() {
             let a_i = net.procs[i].id.actor();
             let packets = net.procs[i]
-                .propose(Reconfig::Join(member))
-                .unwrap()
+                .propose(Reconfig::Join(member))?
                 .into_iter()
                 .map(|vote_msg| Packet {
                     source: a_i,
@@ -255,7 +263,6 @@ fn test_round_robin_split_vote() -> Result<(), Error> {
         }
 
         while !net.packets.is_empty() {
-            println!("{:?}", net);
             for i in 0..net.procs.len() {
                 net.deliver_packet_from_source(net.procs[i].id.actor())?;
             }
@@ -271,17 +278,21 @@ fn test_round_robin_split_vote() -> Result<(), Error> {
         net.generate_msc(&format!("round_robin_split_vote_{}.msc", nprocs))?;
 
         let proc_0_gen = net.procs[0].gen;
-        let expected_members = net.procs[0].members(proc_0_gen).unwrap();
+        let expected_members = net.procs[0].members(proc_0_gen)?;
         assert!(expected_members.len() > nprocs);
 
         for i in 0..nprocs {
             let gen = net.procs[i].gen;
-            assert_eq!(net.procs[i].members(gen).unwrap(), expected_members);
+            assert_eq!(net.procs[i].members(gen)?, expected_members);
         }
 
         for member in expected_members.iter() {
-            let p = net.procs.iter().find(|p| &p.id.actor() == member).unwrap();
-            assert_eq!(p.members(p.gen).unwrap(), expected_members);
+            let p = net
+                .procs
+                .iter()
+                .find(|p| &p.id.actor() == member)
+                .ok_or(format!("Unable to find proc with id {:?}", member))?;
+            assert_eq!(p.members(p.gen)?, expected_members);
         }
     }
     Ok(())
@@ -298,8 +309,7 @@ fn test_onboarding_across_many_generations() -> Result<(), Error> {
         net.procs[i].force_join(p0);
     }
     let packets = net.procs[0]
-        .propose(Reconfig::Join(p1))
-        .unwrap()
+        .propose(Reconfig::Join(p1))?
         .into_iter()
         .map(|vote_msg| Packet {
             source: p0,
@@ -318,8 +328,7 @@ fn test_onboarding_across_many_generations() -> Result<(), Error> {
             }),
     );
     let packets = net.procs[0]
-        .propose(Reconfig::Join(p2))
-        .unwrap()
+        .propose(Reconfig::Join(p2))?
         .into_iter()
         .map(|vote_msg| Packet {
             source: p0,
@@ -347,12 +356,15 @@ fn test_onboarding_across_many_generations() -> Result<(), Error> {
         procs_by_gen.entry(proc.gen).or_default().push(proc);
     }
 
-    let max_gen = procs_by_gen.keys().last().unwrap();
+    let max_gen = procs_by_gen
+        .keys()
+        .last()
+        .ok_or("No generations logged".to_string())?;
     // The last gen should have at least a super majority of nodes
     let current_members: BTreeSet<_> = procs_by_gen[max_gen].iter().map(|p| p.id.actor()).collect();
 
     for proc in procs_by_gen[max_gen].iter() {
-        assert_eq!(current_members, proc.members(proc.gen).unwrap());
+        assert_eq!(current_members, proc.members(proc.gen)?);
     }
     Ok(())
 }
@@ -371,8 +383,7 @@ fn test_simple_proposal() -> Result<(), Error> {
     let proc_0 = net.procs[0].id.actor();
     let proc_3 = net.procs[3].id.actor();
     let packets = net.procs[0]
-        .propose(Reconfig::Join(proc_3))
-        .unwrap()
+        .propose(Reconfig::Join(proc_3))?
         .into_iter()
         .map(|vote_msg| Packet {
             source: proc_0,
@@ -470,7 +481,7 @@ fn test_prop_interpreter_qc1() -> Result<(), Error> {
 
     let reconfig = Reconfig::Join(p1);
     let q = &mut net.procs[0];
-    let propose_vote_msgs = q.propose(reconfig.clone()).unwrap();
+    let propose_vote_msgs = q.propose(reconfig.clone())?;
     let propose_packets = propose_vote_msgs.into_iter().map(|vote_msg| Packet {
         source: p0,
         vote_msg,
@@ -515,8 +526,7 @@ fn test_prop_interpreter_qc2() -> Result<(), Error> {
     }
 
     let propose_packets = net.procs[0]
-        .propose(Reconfig::Join(p1))
-        .unwrap()
+        .propose(Reconfig::Join(p1))?
         .into_iter()
         .map(|vote_msg| Packet {
             source: p0,
@@ -528,17 +538,13 @@ fn test_prop_interpreter_qc2() -> Result<(), Error> {
     net.deliver_packet_from_source(p0)?;
 
     let propose_packets = net.procs[0]
-        .propose(Reconfig::Join(p2))
-        .unwrap()
+        .propose(Reconfig::Join(p2))?
         .into_iter()
         .map(|vote_msg| Packet {
             source: p0,
             vote_msg,
         });
     net.enqueue_packets(propose_packets);
-
-    println!("{:#?}", net);
-    println!("--  [DRAINING]  --");
 
     loop {
         net.drain_queued_packets()?;
@@ -570,8 +576,6 @@ quickcheck! {
             return Ok(TestResult::discard());
         }
 
-        println!("--------------------------------------");
-
         let mut net = Net::with_procs(n);
 
         // Assume procs[0] is the genesis proc. (trusts itself)
@@ -599,10 +603,10 @@ quickcheck! {
                             net.enqueue_packets(propose_packets);
                         }
                         Err(Error::JoinRequestForExistingMember { .. }) => {
-                            assert!(q.members(q.gen).unwrap().contains(&p));
+                            assert!(q.members(q.gen)?.contains(&p));
                         }
                         Err(Error::VoteFromNonMember { .. }) => {
-                            assert!(!q.members(q.gen).unwrap().contains(&q.id.actor()));
+                            assert!(!q.members(q.gen)?.contains(&q.id.actor()));
                         }
                         Err(Error::ExistingVoteIncompatibleWithNewVote { existing_vote }) => {
                             // This proc has already committed to a vote this round
@@ -630,10 +634,10 @@ quickcheck! {
                             net.enqueue_packets(propose_packets);
                         }
                         Err(Error::LeaveRequestForNonMember { .. }) => {
-                            assert!(!q.members(q.gen).unwrap().contains(&p));
+                            assert!(!q.members(q.gen)?.contains(&p));
                         }
                         Err(Error::VoteFromNonMember { .. }) => {
-                            assert!(!q.members(q.gen).unwrap().contains(&q.id.actor()));
+                            assert!(!q.members(q.gen)?.contains(&q.id.actor()));
                         }
                         Err(Error::ExistingVoteIncompatibleWithNewVote { existing_vote }) => {
                             // This proc has already committed to a vote
@@ -662,9 +666,6 @@ quickcheck! {
             }
         }
 
-        println!("{:#?}", net);
-        println!("--  [DRAINING]  --");
-
         loop {
             net.drain_queued_packets()?;
             for i in 0..net.procs.len() {
@@ -689,18 +690,18 @@ quickcheck! {
             procs_by_gen.entry(proc.gen).or_default().push(proc);
         }
 
-        let max_gen = procs_by_gen.keys().last().unwrap();
+        let max_gen = procs_by_gen.keys().last().ok_or("No generations logged".to_string())?;
 
         // And procs at each generation should have agreement on members
         for (gen, procs) in procs_by_gen.iter() {
             let mut proc_iter = procs.iter();
-            let first = proc_iter.next().unwrap();
+            let first = proc_iter.next().ok_or(Error::NoMembers)?;
             if *gen > 0 {
                 // TODO: remove this gen > 0 constraint
-                assert_eq!(first.members(first.gen).unwrap(), net.members_at_gen[&gen]);
+                assert_eq!(first.members(first.gen)?, net.members_at_gen[&gen]);
             }
             for proc in proc_iter {
-                assert_eq!(first.members(first.gen).unwrap(), proc.members(proc.gen).unwrap(), "gen: {}", gen);
+                assert_eq!(first.members(first.gen)?, proc.members(proc.gen)?, "gen: {}", gen);
             }
         }
 
@@ -730,16 +731,16 @@ quickcheck! {
             assert_ne!(reconfigs_applied, Default::default());
         }
 
-        let proc_at_max_gen = procs_by_gen[max_gen].get(0).unwrap();
-        assert!(super_majority(procs_by_gen[max_gen].len(), proc_at_max_gen.members(*max_gen).unwrap().len()), "{:?}", procs_by_gen);
+        let proc_at_max_gen = procs_by_gen[max_gen].get(0).ok_or(Error::NoMembers)?;
+        assert!(super_majority(procs_by_gen[max_gen].len(), proc_at_max_gen.members(*max_gen)?.len()), "{:?}", procs_by_gen);
 
         Ok(TestResult::passed())
     }
 
-    fn prop_validate_reconfig(join_or_leave: bool, actor_idx: usize, members: u8) -> TestResult {
+    fn prop_validate_reconfig(join_or_leave: bool, actor_idx: usize, members: u8) -> Result<TestResult, Error> {
         if members + 1 > 7 {
             // + 1 from the initial proc
-            return TestResult::discard();
+            return Ok(TestResult::discard());
         }
 
         let mut proc = State::default();
@@ -766,7 +767,7 @@ quickcheck! {
         };
 
         let valid_res = proc.validate_reconfig(&reconfig);
-        let proc_members = proc.members(proc.gen).unwrap();
+        let proc_members = proc.members(proc.gen)?;
         match reconfig {
             Reconfig::Join(actor) => {
                 if proc_members.contains(&actor) {
@@ -787,6 +788,6 @@ quickcheck! {
             }
         };
 
-        TestResult::passed()
+        Ok(TestResult::passed())
     }
 }
