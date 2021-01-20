@@ -36,9 +36,11 @@ impl Net {
         }
     }
 
-    pub fn genesis(&self) -> Actor {
-        assert!(!self.procs.is_empty());
-        self.procs[0].id.actor()
+    pub fn genesis(&self) -> Result<Actor, Error> {
+        self.procs
+            .get(0)
+            .map(|p| p.id.actor())
+            .ok_or(Error::NoMembers)
     }
 
     pub fn deliver_packet_from_source(&mut self, source: Actor) {
