@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::File;
 use std::io::Write;
 
@@ -22,7 +22,7 @@ pub struct Net {
     pub procs: Vec<State>,
     pub reconfigs_by_gen: BTreeMap<Generation, BTreeSet<Reconfig>>,
     pub members_at_gen: BTreeMap<Generation, BTreeSet<Actor>>,
-    pub packets: BTreeMap<Actor, Vec<Packet>>,
+    pub packets: BTreeMap<Actor, VecDeque<Packet>>,
     pub delivered_packets: Vec<Packet>,
 }
 
@@ -43,48 +43,29 @@ impl Net {
             .ok_or(Error::NoMembers)
     }
 
-    pub fn deliver_packet_from_source(&mut self, source: Actor) {
-        let packet = if let Some(packets) = self.packets.get_mut(&source) {
-            assert!(!packets.is_empty());
-            packets.remove(0)
-        } else {
-            return;
+    pub fn deliver_packet_from_source(&mut self, source: Actor) -> Result<(), Error> {
+        let packet = match self.packets.get_mut(&source).map(|ps| ps.pop_front()) {
+            Some(Some(p)) => p,
+            _ => return Ok(()), // nothing to do
         };
+        self.purge_empty_queues();
 
         let dest = packet.vote_msg.dest;
-
-        assert_eq!(packet.source, source);
-
-        println!(
-            "delivering {:?}->{:?} {:#?}",
-            packet.source, packet.vote_msg.dest, packet
-        );
+        println!("delivering {:?}->{:?} {:#?}", packet.source, dest, packet);
 
         self.delivered_packets.push(packet.clone());
 
-        self.packets = self
-            .packets
-            .clone()
-            .into_iter()
-            .filter(|(_, queue)| !queue.is_empty())
-            .collect();
-
-        assert_eq!(packet.source, source);
-
-        let dest_proc_opt = self
-            .procs
-            .iter_mut()
-            .find(|p| p.id.actor() == packet.vote_msg.dest);
+        let dest_proc_opt = self.procs.iter_mut().find(|p| p.id.actor() == dest);
 
         let dest_proc = match dest_proc_opt {
             Some(proc) => proc,
             None => {
                 println!("[NET] destination proc does not exist, dropping packet");
-                return;
+                return Ok(());
             }
         };
 
-        let dest_members = dest_proc.members(dest_proc.gen).unwrap();
+        let dest_members = dest_proc.members(dest_proc.gen)?;
         let vote = packet.vote_msg.vote;
 
         let resp = dest_proc.handle_vote(vote);
@@ -120,30 +101,44 @@ impl Net {
             }
         }
 
-        let proc = self.procs.iter().find(|p| p.id.actor() == dest).unwrap();
-        if !proc.faulty {
-            let (mut proc_members, gen) = (proc.members(proc.gen).unwrap(), proc.gen);
+        match self.procs.iter().find(|p| p.id.actor() == dest) {
+            Some(proc) if !proc.faulty => {
+                let (mut proc_members, gen) = (proc.members(proc.gen)?, proc.gen);
 
-            let expected_members_at_gen = self
-                .members_at_gen
-                .entry(gen)
-                .or_insert_with(|| proc_members.clone());
+                let expected_members_at_gen = self
+                    .members_at_gen
+                    .entry(gen)
+                    .or_insert_with(|| proc_members.clone());
 
-            assert_eq!(expected_members_at_gen, &mut proc_members);
+                assert_eq!(expected_members_at_gen, &mut proc_members);
+                Ok(())
+            }
+            _ => Ok(()),
         }
     }
 
     pub fn enqueue_packets(&mut self, packets: impl IntoIterator<Item = Packet>) {
         for packet in packets {
-            self.packets.entry(packet.source).or_default().push(packet);
+            self.packets
+                .entry(packet.source)
+                .or_default()
+                .push_back(packet)
         }
     }
 
-    pub fn drain_queued_packets(&mut self) {
-        while !self.packets.is_empty() {
-            let source = *self.packets.keys().next().unwrap();
-            self.deliver_packet_from_source(source);
+    pub fn drain_queued_packets(&mut self) -> Result<(), Error> {
+        while let Some(source) = self.packets.keys().next().cloned() {
+            self.deliver_packet_from_source(source)?;
+            self.purge_empty_queues();
         }
+        Ok(())
+    }
+
+    pub fn purge_empty_queues(&mut self) {
+        self.packets = core::mem::replace(&mut self.packets, Default::default())
+            .into_iter()
+            .filter(|(_, queue)| !queue.is_empty())
+            .collect();
     }
 
     pub fn force_join(&mut self, p: Actor, q: Actor) {
