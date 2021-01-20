@@ -28,7 +28,7 @@ The rendered chart `round_robin_split_vote_2.png` will look something like the f
 
 ![round robin split vote with 2 members](./docs/round_robin_split_vote_2.png)
 
-Note that although the lines between network members are perfectly horizontal, this does not mean that the packet was sent at that time, only that this is when the destination member received the vote.
+Note that although the lines between network members are perfectly horizontal, this does not mean that the vote was sent and received instantly. When a network member receives a vote, it responds immediately with it's votes (if any) but the simulated network queues up these votes and delivers them deterministically. The horizontal lines show when a vote was finally delivered to it's destination and who it was from.
 
 ## License
 
