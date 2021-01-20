@@ -8,7 +8,7 @@ use brb_membership::{Generation, SigningActor as SigningActorTrait};
 
 pub type Vote = brb_membership::Vote<Actor, Sig>;
 pub type VoteMsg = brb_membership::VoteMsg<Actor, Sig>;
-pub type State = brb_membership::State<Actor, brb_membership::actor::ed25519::SigningActor, Sig>;
+pub type State = brb_membership::State<Actor, SigningActor, Sig>;
 pub type Reconfig = brb_membership::Reconfig<Actor>;
 pub type Error = brb_membership::Error<Actor, Sig>;
 pub type Ballot = brb_membership::Ballot<Actor, Sig>;

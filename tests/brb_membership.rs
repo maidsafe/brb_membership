@@ -57,7 +57,6 @@ fn test_reject_new_join_if_we_are_at_capacity() -> Result<(), Error> {
 
     let leaving_member = proc
         .members(proc.gen)?
-        .get(0)
         .into_iter()
         .next()
         .ok_or(Error::NoMembers)?;
