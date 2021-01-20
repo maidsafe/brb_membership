@@ -41,7 +41,7 @@ fn test_reject_vote_from_non_member() -> Result<(), Error> {
         source: p1,
         vote_msg,
     }));
-    net.drain_queued_packets();
+    net.drain_queued_packets()?;
     Ok(())
 }
 
@@ -111,7 +111,7 @@ fn test_reject_leave_if_actor_is_not_a_member() {
 }
 
 #[test]
-fn test_handle_vote_rejects_packet_from_previous_gen() {
+fn test_handle_vote_rejects_packet_from_previous_gen() -> Result<(), Error> {
     let mut net = Net::with_procs(2);
     let a_0 = net.procs[0].id.actor();
     let a_1 = net.procs[1].id.actor();
@@ -147,7 +147,7 @@ fn test_handle_vote_rejects_packet_from_previous_gen() {
     assert_eq!(stale_packets.len(), 2);
 
     net.enqueue_packets(packets);
-    net.drain_queued_packets();
+    net.drain_queued_packets()?;
 
     println!("net: {:#?}", net);
     let vote = stale_packets.pop().unwrap().vote_msg.vote;
@@ -160,6 +160,8 @@ fn test_handle_vote_rejects_packet_from_previous_gen() {
             pending_gen: 1,
         })
     ));
+
+    Ok(())
 }
 
 #[test]
@@ -181,7 +183,7 @@ fn test_reject_votes_with_invalid_signatures() {
 }
 
 #[test]
-fn test_split_vote() {
+fn test_split_vote() -> Result<(), Error> {
     for nprocs in 1..7 {
         let mut net = Net::with_procs(nprocs * 2);
         for i in 0..nprocs {
@@ -206,14 +208,14 @@ fn test_split_vote() {
             net.enqueue_packets(packets);
         }
 
-        net.drain_queued_packets();
+        net.drain_queued_packets()?;
 
         for i in 0..(nprocs * 2) {
             for j in 0..(nprocs * 2) {
                 net.enqueue_anti_entropy(i, j);
             }
         }
-        net.drain_queued_packets();
+        net.drain_queued_packets()?;
 
         let proc0_gen = net.procs[0].gen;
         let expected_members = net.procs[0].members(proc0_gen).unwrap();
@@ -230,10 +232,12 @@ fn test_split_vote() {
             assert_eq!(p.members(p.gen).unwrap(), expected_members);
         }
     }
+
+    Ok(())
 }
 
 #[test]
-fn test_round_robin_split_vote() {
+fn test_round_robin_split_vote() -> Result<(), Error> {
     for nprocs in 1..7 {
         let mut net = Net::with_procs(nprocs * 2);
         for i in 0..nprocs {
@@ -261,7 +265,7 @@ fn test_round_robin_split_vote() {
         while !net.packets.is_empty() {
             println!("{:?}", net);
             for i in 0..net.procs.len() {
-                net.deliver_packet_from_source(net.procs[i].id.actor());
+                net.deliver_packet_from_source(net.procs[i].id.actor())?;
             }
         }
 
@@ -270,7 +274,7 @@ fn test_round_robin_split_vote() {
                 net.enqueue_anti_entropy(i, j);
             }
         }
-        net.drain_queued_packets();
+        net.drain_queued_packets()?;
 
         net.generate_msc(&format!("round_robin_split_vote_{}.msc", nprocs));
 
@@ -288,10 +292,11 @@ fn test_round_robin_split_vote() {
             assert_eq!(p.members(p.gen).unwrap(), expected_members);
         }
     }
+    Ok(())
 }
 
 #[test]
-fn test_onboarding_across_many_generations() {
+fn test_onboarding_across_many_generations() -> Result<(), Error> {
     let mut net = Net::with_procs(3);
     let p0 = net.procs[0].id.actor();
     let p1 = net.procs[1].id.actor();
@@ -309,8 +314,8 @@ fn test_onboarding_across_many_generations() {
             vote_msg,
         });
     net.enqueue_packets(packets);
-    net.deliver_packet_from_source(p0);
-    net.deliver_packet_from_source(p0);
+    net.deliver_packet_from_source(p0)?;
+    net.deliver_packet_from_source(p0)?;
     net.enqueue_packets(
         net.procs[0]
             .anti_entropy(0, p1)
@@ -330,7 +335,7 @@ fn test_onboarding_across_many_generations() {
         });
     net.enqueue_packets(packets);
     loop {
-        net.drain_queued_packets();
+        net.drain_queued_packets()?;
         for i in 0..3 {
             for j in 0..3 {
                 net.enqueue_anti_entropy(i, j);
@@ -340,7 +345,7 @@ fn test_onboarding_across_many_generations() {
             break;
         }
     }
-    net.drain_queued_packets();
+    net.drain_queued_packets()?;
 
     let mut procs_by_gen: BTreeMap<Generation, Vec<State>> = Default::default();
 
@@ -357,10 +362,11 @@ fn test_onboarding_across_many_generations() {
     for proc in procs_by_gen[max_gen].iter() {
         assert_eq!(current_members, proc.members(proc.gen).unwrap());
     }
+    Ok(())
 }
 
 #[test]
-fn test_simple_proposal() {
+fn test_simple_proposal() -> Result<(), Error> {
     let mut net = Net::with_procs(4);
     for i in 0..4 {
         let a_i = net.procs[i].id.actor();
@@ -381,9 +387,11 @@ fn test_simple_proposal() {
             vote_msg,
         });
     net.enqueue_packets(packets);
-    net.drain_queued_packets();
+    net.drain_queued_packets()?;
 
     net.generate_msc("simple_join.msc");
+
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -459,7 +467,7 @@ impl Arbitrary for Instruction {
 }
 
 #[test]
-fn test_prop_interpreter_qc1() {
+fn test_prop_interpreter_qc1() -> Result<(), Error> {
     let mut net = Net::with_procs(2);
     let p0 = net.procs[0].id.actor();
     let p1 = net.procs[1].id.actor();
@@ -485,7 +493,7 @@ fn test_prop_interpreter_qc1() {
     net.enqueue_anti_entropy(1, 0);
 
     loop {
-        net.drain_queued_packets();
+        net.drain_queued_packets()?;
         for i in 0..net.procs.len() {
             for j in 0..net.procs.len() {
                 net.enqueue_anti_entropy(i, j);
@@ -499,10 +507,11 @@ fn test_prop_interpreter_qc1() {
     for p in net.procs.iter() {
         assert!(p.history.iter().all(|(_, v)| v.is_super_majority_ballot()));
     }
+    Ok(())
 }
 
 #[test]
-fn test_prop_interpreter_qc2() {
+fn test_prop_interpreter_qc2() -> Result<(), Error> {
     let mut net = Net::with_procs(3);
     let p0 = net.procs[0].id.actor();
     let p1 = net.procs[1].id.actor();
@@ -523,8 +532,8 @@ fn test_prop_interpreter_qc2() {
         });
     net.enqueue_packets(propose_packets);
 
-    net.deliver_packet_from_source(p0);
-    net.deliver_packet_from_source(p0);
+    net.deliver_packet_from_source(p0)?;
+    net.deliver_packet_from_source(p0)?;
 
     let propose_packets = net.procs[0]
         .propose(Reconfig::Join(p2))
@@ -540,7 +549,7 @@ fn test_prop_interpreter_qc2() {
     println!("--  [DRAINING]  --");
 
     loop {
-        net.drain_queued_packets();
+        net.drain_queued_packets()?;
         for i in 0..net.procs.len() {
             for j in 0..net.procs.len() {
                 net.enqueue_anti_entropy(i, j);
@@ -555,6 +564,8 @@ fn test_prop_interpreter_qc2() {
     for p in net.procs.iter() {
         assert_eq!(p.votes, Default::default());
     }
+
+    Ok(())
 }
 
 quickcheck! {
@@ -645,7 +656,7 @@ quickcheck! {
                 Instruction::DeliverPacketFromSource(source_idx) => {
                     // deliver packet
                     let source = net.procs[source_idx.min(n - 1)].id.actor();
-                    net.deliver_packet_from_source(source);
+                    net.deliver_packet_from_source(source)?;
                 }
                 Instruction::AntiEntropy(gen, p_idx, q_idx) => {
                     let p = &net.procs[p_idx.min(n - 1)];
@@ -663,7 +674,7 @@ quickcheck! {
         println!("--  [DRAINING]  --");
 
         loop {
-            net.drain_queued_packets();
+            net.drain_queued_packets()?;
             for i in 0..net.procs.len() {
                 for j in 0..net.procs.len() {
                     net.enqueue_anti_entropy(i, j);
@@ -672,7 +683,7 @@ quickcheck! {
             if net.packets.is_empty() {
                 break;
             }
-            net.drain_queued_packets();
+            net.drain_queued_packets()?;
         }
 
         // We should have no more pending votes.
