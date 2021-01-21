@@ -81,7 +81,7 @@ pub enum Ballot<A: Ord, S: Ord> {
     /// merge split votes
     Merge(BTreeSet<Vote<A, S>>),
 
-    /// Supermajority achieved over split vote
+    /// Supermajority achieved over a set of `Reconfig`s
     SuperMajority(BTreeSet<Vote<A, S>>),
 }
 
@@ -137,7 +137,7 @@ where
 /// represents one vote of an Actor
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Vote<A: Ord, S: Ord> {
-    /// generation in which the vote occurs.
+    /// generation for which the vote occurs.  This will match State::pending_gen
     pub gen: Generation,
     /// the ballot we are voting.
     pub ballot: Ballot<A, S>,
@@ -204,7 +204,7 @@ where
 /// A message consisting of a Vote to be sent to a destination Actor
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VoteMsg<A: Ord, S: Ord> {
-    /// The Vote, ie contents of the message.
+    /// The Vote being sent, that is, the message content.
     pub vote: Vote<A, S>,
     /// The recipient Actor
     pub dest: A,
