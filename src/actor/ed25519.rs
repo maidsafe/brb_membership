@@ -1,3 +1,14 @@
+// Copyright 2021 MaidSafe.net limited.
+//
+// This SAFE Network Software is licensed to you under the MIT license <LICENSE-MIT
+// http://opensource.org/licenses/MIT> or the Modified BSD license <LICENSE-BSD
+// https://opensource.org/licenses/BSD-3-Clause>, at your option. This file may not be copied,
+// modified, or distributed except according to those terms. Please review the Licences for the
+// specific language governing permissions and limitations relating to use of the SAFE Network
+// Software.
+
+//! This module provides an ed25519 specialization of Actor, SigningActor, and Sig
+
 use ed25519::{Digest, Keypair, PublicKey, Sha512, Signature, Signer, Verifier};
 use serde::{Deserialize, Serialize};
 
@@ -9,6 +20,7 @@ use std::hash::{Hash, Hasher};
 
 const CONTEXT: &[u8] = b"BRBEd25519DalekSignerPrehashedContext";
 
+/// An implementation of Actor specialized for ed25519 cryptography.
 #[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct Actor(pub PublicKey);
 
@@ -67,6 +79,7 @@ impl PartialEq for Actor {
 
 impl Eq for Actor {}
 
+/// An implementation of SigningActor specialized for ed25519 cryptography.
 pub struct SigningActor(pub Keypair);
 
 impl Signer<Sig> for SigningActor {
@@ -111,6 +124,7 @@ impl PartialEq for SigningActor {
 
 impl Eq for SigningActor {}
 
+/// An implementation of Sig specialized for ed25519 cryptography.
 #[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct Sig(pub Signature);
 
