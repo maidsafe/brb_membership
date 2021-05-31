@@ -168,8 +168,8 @@ fn test_reject_votes_with_invalid_signatures() -> Result<(), Error> {
     let bytes = bincode::serialize(&(&ballot, &gen))?;
     let sig = SigningActor::default().sign(&bytes);
     let resp = proc.handle_vote(Vote {
-        ballot,
         gen,
+        ballot,
         voter,
         sig,
     });
