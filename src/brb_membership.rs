@@ -1,3 +1,17 @@
+// Copyright 2021 MaidSafe.net limited.
+//
+// This SAFE Network Software is licensed to you under the MIT license <LICENSE-MIT
+// http://opensource.org/licenses/MIT> or the Modified BSD license <LICENSE-BSD
+// https://opensource.org/licenses/BSD-3-Clause>, at your option. This file may not be copied,
+// modified, or distributed except according to those terms. Please review the Licences for the
+// specific language governing permissions and limitations relating to use of the SAFE Network
+// Software.
+
+//! BRB Dynamic Membership enables nodes to dynamically join and leave a BRB voting group.
+//!
+//! For an overview, see:
+//! https://github.com/maidsafe/brb/blob/master/doc/BRB.pdf?raw=true
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -7,22 +21,35 @@ use core::fmt::Debug;
 use log::info;
 
 const SOFT_MAX_MEMBERS: usize = 7;
+
+/// Generations start at 0 and increase monotonically
 pub type Generation = u64;
 
+/// Holds local dynamic membership state for a node/peer
 #[derive(Debug)]
 pub struct State<A: Ord, SA, S: Ord> {
+    /// "my" public identifier and message signer. a SigningActor
     pub id: SA,
+    /// present generation
     pub gen: Generation,
+    /// pending generation of next vote.  equals gen+1 when vote in progress, else equals gen.
     pub pending_gen: Generation,
+    /// set of forced Reconfigs, by generation
     pub forced_reconfigs: BTreeMap<Generation, BTreeSet<Reconfig<A>>>,
+    /// history of votes, by generation, since the very first (genesis) generation
     pub history: BTreeMap<Generation, Vote<A, S>>, // for onboarding new procs, the vote proving super majority
+    /// current votes, by Actor
     pub votes: BTreeMap<A, Vote<A, S>>,
+    /// faulty or not flag.  for tests.  may disappear.
     pub faulty: bool,
 }
 
+/// Enumerates Dynamic Membership operations
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Reconfig<A> {
+    /// A proposal for an Actor to join voting group
     Join(A),
+    /// A proposal for an Actor to leave voting group
     Leave(A),
 }
 
@@ -36,6 +63,7 @@ impl<A: Debug> std::fmt::Debug for Reconfig<A> {
 }
 
 impl<A: Ord> Reconfig<A> {
+    /// apply our operation to members.  adds or removes Actor as appropriate.
     fn apply(self, members: &mut BTreeSet<A>) {
         match self {
             Reconfig::Join(p) => members.insert(p),
@@ -44,10 +72,16 @@ impl<A: Ord> Reconfig<A> {
     }
 }
 
+/// Enumerates the different Ballot types that can be voted on
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Ballot<A: Ord, S: Ord> {
+    /// A proposal to add or remove an actor to the voting group
     Propose(Reconfig<A>),
+
+    /// merge split votes
     Merge(BTreeSet<Vote<A, S>>),
+
+    /// Supermajority achieved over a set of `Reconfig`s
     SuperMajority(BTreeSet<Vote<A, S>>),
 }
 
@@ -90,6 +124,7 @@ where
     A: Ord + Clone,
     S: Ord + Clone,
 {
+    /// removes any votes that have been superseded by other votes.
     fn simplify(&self) -> Self {
         match &self {
             Ballot::Propose(_) => self.clone(), // already in simplest form
@@ -99,11 +134,16 @@ where
     }
 }
 
+/// represents one vote of an Actor
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Vote<A: Ord, S: Ord> {
+    /// generation for which the vote occurs.  This will match State::pending_gen
     pub gen: Generation,
+    /// the ballot we are voting.
     pub ballot: Ballot<A, S>,
+    /// the actor casting the vote
     pub voter: A,
+    /// the actor's signature over ballot and generation.
     pub sig: S,
 }
 
@@ -122,6 +162,7 @@ where
     A: Ord + Clone,
     S: Ord + Clone,
 {
+    /// true if vote represents a Ballot::SuperMajority
     pub fn is_super_majority_ballot(&self) -> bool {
         matches!(self.ballot, Ballot::SuperMajority(_))
     }
@@ -160,9 +201,12 @@ where
     }
 }
 
+/// A message consisting of a Vote to be sent to a destination Actor
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VoteMsg<A: Ord, S: Ord> {
+    /// The Vote being sent, that is, the message content.
     pub vote: Vote<A, S>,
+    /// The recipient Actor
     pub dest: A,
 }
 
@@ -183,6 +227,7 @@ where
     SA: SigningActor<A, S>,
     S: Sig,
 {
+    /// construct a new State
     pub fn new() -> Self {
         Self {
             id: SA::default(),
@@ -195,6 +240,7 @@ where
         }
     }
 
+    /// Adds an Actor to voting group in local state only.
     pub fn force_join(&mut self, actor: A) {
         let forced_reconfigs = self.forced_reconfigs.entry(self.gen).or_default();
 
@@ -203,6 +249,7 @@ where
         forced_reconfigs.insert(Reconfig::Join(actor));
     }
 
+    /// Removes an Actor from voting group in local state only.
     pub fn force_leave(&mut self, actor: A) {
         let forced_reconfigs = self.forced_reconfigs.entry(self.gen).or_default();
 
@@ -211,6 +258,7 @@ where
         forced_reconfigs.insert(Reconfig::Leave(actor));
     }
 
+    /// returns the set of voting actors for a given generation
     pub fn members(&self, gen: Generation) -> Result<BTreeSet<A>, Error<A, S>> {
         let mut members = BTreeSet::new();
 
@@ -252,12 +300,15 @@ where
         Err(Error::InvalidGeneration(gen))
     }
 
+    /// Propose a Reconfig (join/leave) operation to all voting members
     pub fn propose(&mut self, reconfig: Reconfig<A>) -> Result<Vec<VoteMsg<A, S>>, Error<A, S>> {
         let vote = self.build_vote(self.gen + 1, Ballot::Propose(reconfig))?;
         self.validate_vote(&vote)?;
         self.cast_vote(vote)
     }
 
+    /// Returns a Vec of VoteMsg representing historical votes that occurred
+    /// since Generation from_gen, which may be 0 for all history.
     pub fn anti_entropy(&self, from_gen: Generation, actor: A) -> Vec<VoteMsg<A, S>> {
         info!(
             "[MBR] anti-entropy for {:?}.{} from {:?}",
@@ -276,6 +327,7 @@ where
         msgs
     }
 
+    /// handles a single vote and returns a list of VoteMsg for notifying voting peers.
     pub fn handle_vote(&mut self, vote: Vote<A, S>) -> Result<Vec<VoteMsg<A, S>>, Error<A, S>> {
         self.validate_vote(&vote)?;
 
@@ -492,6 +544,7 @@ where
         winning_reconfigs
     }
 
+    /// validates a Vote
     pub fn validate_vote(&self, vote: &Vote<A, S>) -> Result<(), Error<A, S>> {
         let members = self.members(self.gen)?;
         let blob_bytes = bincode::serialize(&(&vote.ballot, &vote.gen))?;
@@ -585,6 +638,7 @@ where
         }
     }
 
+    /// Validate a Reconfig join or leave operation.
     pub fn validate_reconfig(&self, reconfig: &Reconfig<A>) -> Result<(), Error<A, S>> {
         let members = self.members(self.gen)?;
         match reconfig {
