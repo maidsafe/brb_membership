@@ -191,10 +191,10 @@ fn test_split_vote() -> Result<(), Error> {
 
         let joining_members: Vec<Actor> =
             net.procs[nprocs..].iter().map(|p| p.id.actor()).collect();
-        for (i, member) in joining_members.into_iter().enumerate() {
+        for (i, member) in joining_members.iter().enumerate() {
             let a_i = net.procs[i].id.actor();
             let packets = net.procs[i]
-                .propose(Reconfig::Join(member))?
+                .propose(Reconfig::Join(*member))?
                 .into_iter()
                 .map(|vote_msg| Packet {
                     source: a_i,
@@ -249,10 +249,10 @@ fn test_round_robin_split_vote() -> Result<(), Error> {
 
         let joining_members: Vec<Actor> =
             net.procs[nprocs..].iter().map(|p| p.id.actor()).collect();
-        for (i, member) in joining_members.into_iter().enumerate() {
+        for (i, member) in joining_members.iter().enumerate() {
             let a_i = net.procs[i].id.actor();
             let packets = net.procs[i]
-                .propose(Reconfig::Join(member))?
+                .propose(Reconfig::Join(*member))?
                 .into_iter()
                 .map(|vote_msg| Packet {
                     source: a_i,
@@ -694,7 +694,7 @@ quickcheck! {
             let first = proc_iter.next().ok_or(Error::NoMembers)?;
             if *gen > 0 {
                 // TODO: remove this gen > 0 constraint
-                assert_eq!(first.members(first.gen)?, net.members_at_gen[&gen]);
+                assert_eq!(first.members(first.gen)?, net.members_at_gen[gen]);
             }
             for proc in proc_iter {
                 assert_eq!(first.members(first.gen)?, proc.members(proc.gen)?, "gen: {}", gen);
@@ -705,19 +705,19 @@ quickcheck! {
 
         for (gen, reconfigs) in net.reconfigs_by_gen.iter() {
             let members_at_prev_gen = net.members_at_gen[&(gen - 1)].clone();
-            let members_at_curr_gen = net.members_at_gen[&gen].clone();
+            let members_at_curr_gen = net.members_at_gen[gen].clone();
             let mut reconfigs_applied: BTreeSet<&Reconfig> = Default::default();
             for reconfig in reconfigs {
                 match reconfig {
                     Reconfig::Join(p) => {
-                        assert!(!members_at_prev_gen.contains(&p));
-                        if members_at_curr_gen.contains(&p) {
+                        assert!(!members_at_prev_gen.contains(p));
+                        if members_at_curr_gen.contains(p) {
                             reconfigs_applied.insert(reconfig);
                         }
                     }
                     Reconfig::Leave(p) => {
-                        assert!(members_at_prev_gen.contains(&p));
-                        if !members_at_curr_gen.contains(&p) {
+                        assert!(members_at_prev_gen.contains(p));
+                        if !members_at_curr_gen.contains(p) {
                             reconfigs_applied.insert(reconfig);
                         }
                     }
