@@ -28,7 +28,7 @@ where
     JoinRequestForExistingMember { requester: A, members: BTreeSet<A> },
     #[error("You must be a member to request to leave ({requester:?} not in {members:?})")]
     LeaveRequestForNonMember { requester: A, members: BTreeSet<A> },
-    #[error("A vote is always for the next generation: vote gen {vote_gen} != {gen} + 1")]
+    #[error("A vote is always for the next generation: vote gen {vote_gen} != {gen} + 1, pending gen: {pending_gen}")]
     VoteNotForNextGeneration {
         vote_gen: Generation,
         gen: Generation,
@@ -53,19 +53,4 @@ where
     InvalidVoteInHistory(Vote<A, S>),
     #[error("Failed to encode with bincode")]
     Encoding(#[from] bincode::Error),
-
-    #[error("{0}")]
-    Other(String),
-}
-
-impl<A: Ord + Debug, S: Ord + Debug> From<String> for Error<A, S> {
-    fn from(v: String) -> Self {
-        Error::Other(v)
-    }
-}
-
-impl<A: Ord + Debug, S: Ord + Debug> From<&'static str> for Error<A, S> {
-    fn from(v: &'static str) -> Self {
-        v.to_string().into()
-    }
 }

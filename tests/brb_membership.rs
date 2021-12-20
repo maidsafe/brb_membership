@@ -1,3 +1,4 @@
+use eyre::eyre;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod net;
@@ -179,7 +180,7 @@ fn test_reject_votes_with_invalid_signatures() -> Result<(), Error> {
 }
 
 #[test]
-fn test_split_vote() -> Result<(), Error> {
+fn test_split_vote() -> eyre::Result<()> {
     for nprocs in 1..7 {
         let mut net = Net::with_procs(nprocs * 2);
         for i in 0..nprocs {
@@ -227,7 +228,7 @@ fn test_split_vote() -> Result<(), Error> {
                 .procs
                 .iter()
                 .find(|p| &p.id.actor() == member)
-                .ok_or(format!("Could not find process with id {:?}", member))?;
+                .ok_or_else(|| eyre!("Could not find process with id {:?}", member))?;
 
             assert_eq!(p.members(p.gen)?, expected_members);
         }
@@ -237,7 +238,7 @@ fn test_split_vote() -> Result<(), Error> {
 }
 
 #[test]
-fn test_round_robin_split_vote() -> Result<(), Error> {
+fn test_round_robin_split_vote() -> eyre::Result<()> {
     for nprocs in 1..7 {
         let mut net = Net::with_procs(nprocs * 2);
         for i in 0..nprocs {
@@ -290,7 +291,7 @@ fn test_round_robin_split_vote() -> Result<(), Error> {
                 .procs
                 .iter()
                 .find(|p| &p.id.actor() == member)
-                .ok_or(format!("Unable to find proc with id {:?}", member))?;
+                .ok_or_else(|| eyre!("Unable to find proc with id {:?}", member))?;
             assert_eq!(p.members(p.gen)?, expected_members);
         }
     }
@@ -298,7 +299,7 @@ fn test_round_robin_split_vote() -> Result<(), Error> {
 }
 
 #[test]
-fn test_onboarding_across_many_generations() -> Result<(), Error> {
+fn test_onboarding_across_many_generations() -> eyre::Result<()> {
     let mut net = Net::with_procs(3);
     let p0 = net.procs[0].id.actor();
     let p1 = net.procs[1].id.actor();
@@ -355,7 +356,10 @@ fn test_onboarding_across_many_generations() -> Result<(), Error> {
         procs_by_gen.entry(proc.gen).or_default().push(proc);
     }
 
-    let max_gen = procs_by_gen.keys().last().ok_or("No generations logged")?;
+    let max_gen = procs_by_gen
+        .keys()
+        .last()
+        .ok_or_else(|| eyre!("No generations logged"))?;
     // The last gen should have at least a super majority of nodes
     let current_members: BTreeSet<_> = procs_by_gen[max_gen].iter().map(|p| p.id.actor()).collect();
 
@@ -563,7 +567,7 @@ fn test_prop_interpreter_qc2() -> Result<(), Error> {
 }
 
 quickcheck! {
-    fn prop_interpreter(n: usize, instructions: Vec<Instruction>) -> Result<TestResult, Error> {
+    fn prop_interpreter(n: usize, instructions: Vec<Instruction>) -> eyre::Result<TestResult> {
         fn super_majority(m: usize, n: usize) -> bool {
             3 * m > 2 * n
         }
@@ -686,7 +690,7 @@ quickcheck! {
             procs_by_gen.entry(proc.gen).or_default().push(proc);
         }
 
-        let max_gen = procs_by_gen.keys().last().ok_or("No generations logged")?;
+        let max_gen = procs_by_gen.keys().last().ok_or_else(|| eyre!("No generations logged"))?;
 
         // And procs at each generation should have agreement on members
         for (gen, procs) in procs_by_gen.iter() {
