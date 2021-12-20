@@ -1,6 +1,6 @@
 [package]
 name = "brb_membership"
-version = "1.0.10"
+version = "1.0.11"
 description = "BRB Membership: Enables nodes to dynamically join and leave a BRB voting group"
 authors = [ "David Rusu <davidrusu.me@gmail.com>" ]
 license = "MIT OR BSD-3-Clause"
