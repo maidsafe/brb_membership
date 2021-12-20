@@ -1,9 +1,9 @@
 use ed25519::{Digest, Keypair, PublicKey, Sha512, Signature, Signer, Verifier};
 use serde::{Deserialize, Serialize};
 
+use crate::SigningActor as SigningActorTrait;
 use rand::rngs::OsRng;
 use std::cmp::{Eq, Ord, Ordering, PartialEq, PartialOrd};
-use std::convert::TryInto;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
@@ -14,7 +14,6 @@ pub struct Actor(pub PublicKey);
 
 impl Default for Actor {
     fn default() -> Self {
-        use crate::SigningActor as SigningActorTrait;
         SigningActor::default().actor()
     }
 }
@@ -116,15 +115,14 @@ pub struct Sig(pub Signature);
 
 impl signature::Signature for Sig {
     fn from_bytes(bytes: &[u8]) -> Result<Self, signature::Error> {
-        let s = bytes.try_into().map_err(signature::Error::from_source)?;
-        let sig = Signature::new(s);
+        let sig = Signature::from_bytes(bytes)?;
         Ok(Self(sig))
     }
 }
 
 impl AsRef<[u8]> for Sig {
     fn as_ref(&self) -> &[u8] {
-        &self.0.as_ref()
+        self.0.as_ref()
     }
 }
 

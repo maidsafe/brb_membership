@@ -72,7 +72,7 @@ fn simplify_votes<A: Ord + Clone, S: Ord + Clone>(
     for v in votes.iter() {
         let mut this_vote_is_superseded = false;
         for other_v in votes.iter() {
-            if other_v != v && other_v.supersedes(&v) {
+            if other_v != v && other_v.supersedes(v) {
                 this_vote_is_superseded = true;
             }
         }
@@ -93,8 +93,8 @@ where
     fn simplify(&self) -> Self {
         match &self {
             Ballot::Propose(_) => self.clone(), // already in simplest form
-            Ballot::Merge(votes) => Ballot::Merge(simplify_votes(&votes)),
-            Ballot::SuperMajority(votes) => Ballot::SuperMajority(simplify_votes(&votes)),
+            Ballot::Merge(votes) => Ballot::Merge(simplify_votes(votes)),
+            Ballot::SuperMajority(votes) => Ballot::SuperMajority(simplify_votes(votes)),
         }
     }
 }
@@ -411,7 +411,7 @@ where
     fn log_vote(&mut self, vote: &Vote<A, S>) {
         for vote in vote.unpack_votes() {
             let existing_vote = self.votes.entry(vote.voter).or_insert_with(|| vote.clone());
-            if vote.supersedes(&existing_vote) {
+            if vote.supersedes(existing_vote) {
                 *existing_vote = vote.clone()
             }
         }
@@ -440,7 +440,7 @@ where
         let most_votes = counts.values().max().cloned().unwrap_or_default();
         let members = self.members(self.gen)?;
         let voters = &votes.iter().map(|v| v.voter).collect();
-        let remaining_voters = members.difference(&voters).count();
+        let remaining_voters = members.difference(voters).count();
 
         // give the remaining votes to the reconfigs with the most votes.
         let predicted_votes = most_votes + remaining_voters;
@@ -511,7 +511,7 @@ where
             })
         } else if self.votes.contains_key(&vote.voter)
             && !vote.supersedes(&self.votes[&vote.voter])
-            && !self.votes[&vote.voter].supersedes(&vote)
+            && !self.votes[&vote.voter].supersedes(vote)
         {
             Err(Error::ExistingVoteIncompatibleWithNewVote {
                 existing_vote: self.votes[&vote.voter].clone(),
@@ -541,7 +541,7 @@ where
 
     fn validate_ballot(&self, gen: Generation, ballot: &Ballot<A, S>) -> Result<(), Error<A, S>> {
         match ballot {
-            Ballot::Propose(reconfig) => self.validate_reconfig(&reconfig),
+            Ballot::Propose(reconfig) => self.validate_reconfig(reconfig),
             Ballot::Merge(votes) => {
                 for vote in votes.iter() {
                     if vote.gen != gen {
@@ -589,7 +589,7 @@ where
         let members = self.members(self.gen)?;
         match reconfig {
             Reconfig::Join(actor) => {
-                if members.contains(&actor) {
+                if members.contains(actor) {
                     Err(Error::JoinRequestForExistingMember {
                         requester: *actor,
                         members,
@@ -601,7 +601,7 @@ where
                 }
             }
             Reconfig::Leave(actor) => {
-                if !members.contains(&actor) {
+                if !members.contains(actor) {
                     Err(Error::LeaveRequestForNonMember {
                         requester: *actor,
                         members,
