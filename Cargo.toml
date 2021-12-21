@@ -5,7 +5,7 @@ description = "BRB Membership: Enables nodes to dynamically join and leave a BRB
 authors = [ "David Rusu <davidrusu.me@gmail.com>" ]
 license = "MIT OR BSD-3-Clause"
 repository = "https://github.com/maidsafe/brb_membership"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 crdts = "5.0.0"

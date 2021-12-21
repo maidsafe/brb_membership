@@ -1,20 +1,21 @@
 use eyre::eyre;
+use net::{Net, Packet};
+use rand::{prelude::StdRng, SeedableRng};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod net;
-use crate::net::{Actor, Ballot, Error, Net, Packet, Reconfig, SigningActor, State, Vote};
 
-use brb_membership::{Generation, SigningActor as SigningActorTrait};
+use brb_membership::{Ballot, Error, Generation, PublicKey, Reconfig, SecretKey, State, Vote};
 use crdts::quickcheck::{quickcheck, Arbitrary, Gen, TestResult};
-use signature::Signer;
 
 #[test]
 fn test_reject_changing_reconfig_when_one_is_in_progress() -> Result<(), Error> {
-    let mut proc = State::default();
-    proc.force_join(proc.id.actor());
-    proc.propose(Reconfig::Join(Actor::default()))?;
+    let mut rng = StdRng::from_seed([0u8; 32]);
+    let mut proc = State::random(&mut rng);
+    proc.force_join(proc.public_key());
+    proc.propose(Reconfig::Join(PublicKey::random(&mut rng)))?;
     assert!(matches!(
-        proc.propose(Reconfig::Join(Actor::default())),
+        proc.propose(Reconfig::Join(PublicKey::random(&mut rng))),
         Err(Error::ExistingVoteIncompatibleWithNewVote { .. })
     ));
     Ok(())
@@ -22,14 +23,15 @@ fn test_reject_changing_reconfig_when_one_is_in_progress() -> Result<(), Error> 
 
 #[test]
 fn test_reject_vote_from_non_member() -> Result<(), Error> {
-    let mut net = Net::with_procs(2);
+    let mut rng = StdRng::from_seed([0u8; 32]);
+    let mut net = Net::with_procs(2, &mut rng);
     net.procs[1].faulty = true;
-    let p0 = net.procs[0].id.actor();
-    let p1 = net.procs[1].id.actor();
+    let p0 = net.procs[0].public_key();
+    let p1 = net.procs[1].public_key();
     net.force_join(p1, p0);
     net.force_join(p1, p1);
 
-    let resp = net.procs[1].propose(Reconfig::Join(Default::default()))?;
+    let resp = net.procs[1].propose(Reconfig::Join(PublicKey::random(&mut rng)))?;
     net.enqueue_packets(resp.into_iter().map(|vote_msg| Packet {
         source: p1,
         vote_msg,
@@ -40,19 +42,21 @@ fn test_reject_vote_from_non_member() -> Result<(), Error> {
 
 #[test]
 fn test_reject_new_join_if_we_are_at_capacity() -> Result<(), Error> {
+    let mut rng = StdRng::from_seed([0u8; 32]);
+
     let mut proc = State {
         forced_reconfigs: vec![(
             0,
-            (0..7).map(|_| Reconfig::Join(Actor::default())).collect(),
+            BTreeSet::from_iter((0..7).map(|_| Reconfig::Join(PublicKey::random(&mut rng)))),
         )]
         .into_iter()
         .collect(),
-        ..State::default()
+        ..State::random(&mut rng)
     };
-    proc.force_join(proc.id.actor());
+    proc.force_join(proc.public_key());
 
     assert!(matches!(
-        proc.propose(Reconfig::Join(Actor::default())),
+        proc.propose(Reconfig::Join(PublicKey::random(&mut rng))),
         Err(Error::MembersAtCapacity { .. })
     ));
 
@@ -67,16 +71,17 @@ fn test_reject_new_join_if_we_are_at_capacity() -> Result<(), Error> {
 
 #[test]
 fn test_reject_join_if_actor_is_already_a_member() -> Result<(), Error> {
+    let mut rng = StdRng::from_seed([0u8; 32]);
     let mut proc = State {
         forced_reconfigs: vec![(
             0,
-            (0..1).map(|_| Reconfig::Join(Actor::default())).collect(),
+            BTreeSet::from_iter((0..1).map(|_| Reconfig::Join(PublicKey::random(&mut rng)))),
         )]
         .into_iter()
         .collect(),
-        ..State::default()
+        ..State::random(&mut rng)
     };
-    proc.force_join(proc.id.actor());
+    proc.force_join(proc.public_key());
 
     let member = proc
         .members(proc.gen)?
@@ -92,34 +97,35 @@ fn test_reject_join_if_actor_is_already_a_member() -> Result<(), Error> {
 
 #[test]
 fn test_reject_leave_if_actor_is_not_a_member() {
+    let mut rng = StdRng::from_seed([0u8; 32]);
     let mut proc = State {
         forced_reconfigs: vec![(
             0,
-            (0..1).map(|_| Reconfig::Join(Actor::default())).collect(),
+            BTreeSet::from_iter((0..1).map(|_| Reconfig::Join(PublicKey::random(&mut rng)))),
         )]
         .into_iter()
         .collect(),
-        ..State::default()
+        ..State::random(&mut rng)
     };
-    proc.force_join(proc.id.actor());
+    proc.force_join(proc.public_key());
 
-    let leaving_actor = Actor::default();
-    let resp = proc.propose(Reconfig::Leave(leaving_actor));
+    let resp = proc.propose(Reconfig::Leave(PublicKey::random(&mut rng)));
     assert!(matches!(resp, Err(Error::LeaveRequestForNonMember { .. })));
 }
 
 #[test]
 fn test_handle_vote_rejects_packet_from_previous_gen() -> Result<(), Error> {
-    let mut net = Net::with_procs(2);
-    let a_0 = net.procs[0].id.actor();
-    let a_1 = net.procs[1].id.actor();
+    let mut rng = StdRng::from_seed([0u8; 32]);
+    let mut net = Net::with_procs(2, &mut rng);
+    let a_0 = net.procs[0].public_key();
+    let a_1 = net.procs[1].public_key();
     net.procs[0].force_join(a_0);
     net.procs[0].force_join(a_1);
     net.procs[1].force_join(a_0);
     net.procs[1].force_join(a_1);
 
     let packets = net.procs[0]
-        .propose(Reconfig::Join(Actor::default()))?
+        .propose(Reconfig::Join(PublicKey::random(&mut rng)))?
         .into_iter()
         .map(|vote_msg| Packet {
             source: a_0,
@@ -128,7 +134,7 @@ fn test_handle_vote_rejects_packet_from_previous_gen() -> Result<(), Error> {
         .collect::<Vec<_>>();
 
     let stale_packets = net.procs[1]
-        .propose(Reconfig::Join(Actor::default()))?
+        .propose(Reconfig::Join(PublicKey::random(&mut rng)))?
         .into_iter()
         .map(|vote_msg| Packet {
             source: a_1,
@@ -162,12 +168,13 @@ fn test_handle_vote_rejects_packet_from_previous_gen() -> Result<(), Error> {
 
 #[test]
 fn test_reject_votes_with_invalid_signatures() -> Result<(), Error> {
-    let mut proc = State::default();
-    let ballot = Ballot::Propose(Reconfig::Join(Default::default()));
+    let mut rng = StdRng::from_seed([0u8; 32]);
+    let mut proc = State::random(&mut rng);
+    let ballot = Ballot::Propose(Reconfig::Join(PublicKey::random(&mut rng)));
     let gen = proc.gen + 1;
-    let voter = Default::default();
+    let voter = PublicKey::random(&mut rng);
     let bytes = bincode::serialize(&(&ballot, &gen))?;
-    let sig = SigningActor::default().sign(&bytes);
+    let sig = SecretKey::random(&mut rng).sign(&bytes);
     let resp = proc.handle_vote(Vote {
         gen,
         ballot,
@@ -181,19 +188,19 @@ fn test_reject_votes_with_invalid_signatures() -> Result<(), Error> {
 
 #[test]
 fn test_split_vote() -> eyre::Result<()> {
+    let mut rng = StdRng::from_seed([0u8; 32]);
     for nprocs in 1..7 {
-        let mut net = Net::with_procs(nprocs * 2);
+        let mut net = Net::with_procs(nprocs * 2, &mut rng);
         for i in 0..nprocs {
-            let i_actor = net.procs[i].id.actor();
+            let i_actor = net.procs[i].public_key();
             for j in 0..(nprocs * 2) {
                 net.procs[j].force_join(i_actor);
             }
         }
 
-        let joining_members: Vec<Actor> =
-            net.procs[nprocs..].iter().map(|p| p.id.actor()).collect();
+        let joining_members = Vec::from_iter(net.procs[nprocs..].iter().map(State::public_key));
         for (i, member) in joining_members.iter().enumerate() {
-            let a_i = net.procs[i].id.actor();
+            let a_i = net.procs[i].public_key();
             let packets = net.procs[i]
                 .propose(Reconfig::Join(*member))?
                 .into_iter()
@@ -227,7 +234,7 @@ fn test_split_vote() -> eyre::Result<()> {
             let p = net
                 .procs
                 .iter()
-                .find(|p| &p.id.actor() == member)
+                .find(|p| &p.public_key() == member)
                 .ok_or_else(|| eyre!("Could not find process with id {:?}", member))?;
 
             assert_eq!(p.members(p.gen)?, expected_members);
@@ -239,19 +246,19 @@ fn test_split_vote() -> eyre::Result<()> {
 
 #[test]
 fn test_round_robin_split_vote() -> eyre::Result<()> {
+    let mut rng = StdRng::from_seed([0u8; 32]);
     for nprocs in 1..7 {
-        let mut net = Net::with_procs(nprocs * 2);
+        let mut net = Net::with_procs(nprocs * 2, &mut rng);
         for i in 0..nprocs {
-            let i_actor = net.procs[i].id.actor();
+            let i_actor = net.procs[i].public_key();
             for j in 0..(nprocs * 2) {
                 net.procs[j].force_join(i_actor);
             }
         }
 
-        let joining_members: Vec<Actor> =
-            net.procs[nprocs..].iter().map(|p| p.id.actor()).collect();
+        let joining_members = Vec::from_iter(net.procs[nprocs..].iter().map(State::public_key));
         for (i, member) in joining_members.iter().enumerate() {
-            let a_i = net.procs[i].id.actor();
+            let a_i = net.procs[i].public_key();
             let packets = net.procs[i]
                 .propose(Reconfig::Join(*member))?
                 .into_iter()
@@ -264,7 +271,7 @@ fn test_round_robin_split_vote() -> eyre::Result<()> {
 
         while !net.packets.is_empty() {
             for i in 0..net.procs.len() {
-                net.deliver_packet_from_source(net.procs[i].id.actor())?;
+                net.deliver_packet_from_source(net.procs[i].public_key())?;
             }
         }
 
@@ -290,7 +297,7 @@ fn test_round_robin_split_vote() -> eyre::Result<()> {
             let p = net
                 .procs
                 .iter()
-                .find(|p| &p.id.actor() == member)
+                .find(|p| &p.public_key() == member)
                 .ok_or_else(|| eyre!("Unable to find proc with id {:?}", member))?;
             assert_eq!(p.members(p.gen)?, expected_members);
         }
@@ -300,10 +307,11 @@ fn test_round_robin_split_vote() -> eyre::Result<()> {
 
 #[test]
 fn test_onboarding_across_many_generations() -> eyre::Result<()> {
-    let mut net = Net::with_procs(3);
-    let p0 = net.procs[0].id.actor();
-    let p1 = net.procs[1].id.actor();
-    let p2 = net.procs[2].id.actor();
+    let mut rng = StdRng::from_seed([0u8; 32]);
+    let mut net = Net::with_procs(3, &mut rng);
+    let p0 = net.procs[0].public_key();
+    let p1 = net.procs[1].public_key();
+    let p2 = net.procs[2].public_key();
 
     for i in 0..3 {
         net.procs[i].force_join(p0);
@@ -361,7 +369,7 @@ fn test_onboarding_across_many_generations() -> eyre::Result<()> {
         .last()
         .ok_or_else(|| eyre!("No generations logged"))?;
     // The last gen should have at least a super majority of nodes
-    let current_members: BTreeSet<_> = procs_by_gen[max_gen].iter().map(|p| p.id.actor()).collect();
+    let current_members = BTreeSet::from_iter(procs_by_gen[max_gen].iter().map(State::public_key));
 
     for proc in procs_by_gen[max_gen].iter() {
         assert_eq!(current_members, proc.members(proc.gen)?);
@@ -371,17 +379,18 @@ fn test_onboarding_across_many_generations() -> eyre::Result<()> {
 
 #[test]
 fn test_simple_proposal() -> Result<(), Error> {
-    let mut net = Net::with_procs(4);
+    let mut rng = StdRng::from_seed([0u8; 32]);
+    let mut net = Net::with_procs(4, &mut rng);
     for i in 0..4 {
-        let a_i = net.procs[i].id.actor();
+        let a_i = net.procs[i].public_key();
         for j in 0..3 {
-            let a_j = net.procs[j].id.actor();
+            let a_j = net.procs[j].public_key();
             net.force_join(a_i, a_j);
         }
     }
 
-    let proc_0 = net.procs[0].id.actor();
-    let proc_3 = net.procs[3].id.actor();
+    let proc_0 = net.procs[0].public_key();
+    let proc_3 = net.procs[3].public_key();
     let packets = net.procs[0]
         .propose(Reconfig::Join(proc_3))?
         .into_iter()
@@ -471,9 +480,10 @@ impl Arbitrary for Instruction {
 
 #[test]
 fn test_prop_interpreter_qc1() -> Result<(), Error> {
-    let mut net = Net::with_procs(2);
-    let p0 = net.procs[0].id.actor();
-    let p1 = net.procs[1].id.actor();
+    let mut rng = StdRng::from_seed([0u8; 32]);
+    let mut net = Net::with_procs(2, &mut rng);
+    let p0 = net.procs[0].public_key();
+    let p1 = net.procs[1].public_key();
 
     for proc in net.procs.iter_mut() {
         proc.force_join(p0);
@@ -481,7 +491,7 @@ fn test_prop_interpreter_qc1() -> Result<(), Error> {
 
     let reconfig = Reconfig::Join(p1);
     let q = &mut net.procs[0];
-    let propose_vote_msgs = q.propose(reconfig.clone())?;
+    let propose_vote_msgs = q.propose(reconfig)?;
     let propose_packets = propose_vote_msgs.into_iter().map(|vote_msg| Packet {
         source: p0,
         vote_msg,
@@ -515,10 +525,11 @@ fn test_prop_interpreter_qc1() -> Result<(), Error> {
 
 #[test]
 fn test_prop_interpreter_qc2() -> Result<(), Error> {
-    let mut net = Net::with_procs(3);
-    let p0 = net.procs[0].id.actor();
-    let p1 = net.procs[1].id.actor();
-    let p2 = net.procs[2].id.actor();
+    let mut rng = StdRng::from_seed([0u8; 32]);
+    let mut net = Net::with_procs(3, &mut rng);
+    let p0 = net.procs[0].public_key();
+    let p1 = net.procs[1].public_key();
+    let p2 = net.procs[2].public_key();
 
     // Assume procs[0] is the genesis proc.
     for proc in net.procs.iter_mut() {
@@ -568,6 +579,8 @@ fn test_prop_interpreter_qc2() -> Result<(), Error> {
 
 quickcheck! {
     fn prop_interpreter(n: usize, instructions: Vec<Instruction>) -> eyre::Result<TestResult> {
+        let mut rng = StdRng::from_seed([0u8; 32]);
+
         fn super_majority(m: usize, n: usize) -> bool {
             3 * m > 2 * n
         }
@@ -576,7 +589,7 @@ quickcheck! {
             return Ok(TestResult::discard());
         }
 
-        let mut net = Net::with_procs(n);
+        let mut net = Net::with_procs(n, &mut rng);
 
         // Assume procs[0] is the genesis proc. (trusts itself)
         let gen_proc = net.genesis()?;
@@ -589,12 +602,12 @@ quickcheck! {
             match instruction {
                 Instruction::RequestJoin(p_idx, q_idx) => {
                     // p requests to join q
-                    let p = net.procs[p_idx.min(n - 1)].id.actor();
+                    let p = net.procs[p_idx.min(n - 1)].public_key();
                     let reconfig = Reconfig::Join(p);
 
                     let q = &mut net.procs[q_idx.min(n - 1)];
-                    let q_actor = q.id.actor();
-                    match q.propose(reconfig.clone()) {
+                    let q_actor = q.public_key();
+                    match q.propose(reconfig) {
                         Ok(propose_vote_msgs) => {
                             let propose_packets = propose_vote_msgs
                                 .into_iter()
@@ -606,11 +619,11 @@ quickcheck! {
                             assert!(q.members(q.gen)?.contains(&p));
                         }
                         Err(Error::VoteFromNonMember { .. }) => {
-                            assert!(!q.members(q.gen)?.contains(&q.id.actor()));
+                            assert!(!q.members(q.gen)?.contains(&q.public_key()));
                         }
                         Err(Error::ExistingVoteIncompatibleWithNewVote { existing_vote }) => {
                             // This proc has already committed to a vote this round
-                            assert_eq!(q.votes.get(&q.id.actor()), Some(&existing_vote));
+                            assert_eq!(q.votes.get(&q.public_key()), Some(&existing_vote));
                         }
                         Err(err) => {
                             // invalid request.
@@ -620,12 +633,12 @@ quickcheck! {
                 },
                 Instruction::RequestLeave(p_idx, q_idx) => {
                     // p requests to leave q
-                    let p = net.procs[p_idx.min(n - 1)].id.actor();
+                    let p = net.procs[p_idx.min(n - 1)].public_key();
                     let reconfig = Reconfig::Leave(p);
 
                     let q = &mut net.procs[q_idx.min(n - 1)];
-                    let q_actor = q.id.actor();
-                    match q.propose(reconfig.clone()) {
+                    let q_actor = q.public_key();
+                    match q.propose(reconfig) {
                         Ok(propose_vote_msgs) => {
                             let propose_packets = propose_vote_msgs.
                                 into_iter().
@@ -637,11 +650,11 @@ quickcheck! {
                             assert!(!q.members(q.gen)?.contains(&p));
                         }
                         Err(Error::VoteFromNonMember { .. }) => {
-                            assert!(!q.members(q.gen)?.contains(&q.id.actor()));
+                            assert!(!q.members(q.gen)?.contains(&q.public_key()));
                         }
                         Err(Error::ExistingVoteIncompatibleWithNewVote { existing_vote }) => {
                             // This proc has already committed to a vote
-                            assert_eq!(q.votes.get(&q.id.actor()), Some(&existing_vote));
+                            assert_eq!(q.votes.get(&q.public_key()), Some(&existing_vote));
                         }
                         Err(err) => {
                             // invalid request.
@@ -651,13 +664,13 @@ quickcheck! {
                 },
                 Instruction::DeliverPacketFromSource(source_idx) => {
                     // deliver packet
-                    let source = net.procs[source_idx.min(n - 1)].id.actor();
+                    let source = net.procs[source_idx.min(n - 1)].public_key();
                     net.deliver_packet_from_source(source)?;
                 }
                 Instruction::AntiEntropy(gen, p_idx, q_idx) => {
                     let p = &net.procs[p_idx.min(n - 1)];
-                    let q_actor = net.procs[q_idx.min(n - 1)].id.actor();
-                    let p_actor = p.id.actor();
+                    let q_actor = net.procs[q_idx.min(n - 1)].public_key();
+                    let p_actor = p.public_key();
                     let anti_entropy_packets = p.anti_entropy(gen, q_actor)
                         .into_iter()
                         .map(|vote_msg| Packet { source: p_actor, vote_msg });
@@ -738,16 +751,18 @@ quickcheck! {
     }
 
     fn prop_validate_reconfig(join_or_leave: bool, actor_idx: usize, members: u8) -> Result<TestResult, Error> {
+        let mut rng = StdRng::from_seed([0u8; 32]);
+
         if members + 1 > 7 {
             // + 1 from the initial proc
             return Ok(TestResult::discard());
         }
 
-        let mut proc = State::default();
+        let mut proc = State::random(&mut rng);
 
         let trusted_actors: Vec<_> = (0..members)
-            .map(|_| Actor::default())
-            .chain(vec![proc.id.actor()])
+            .map(|_| PublicKey::random(&mut rng))
+            .chain(vec![proc.public_key()])
             .collect();
 
         for a in trusted_actors.iter() {
@@ -756,7 +771,7 @@ quickcheck! {
 
         let all_actors = {
             let mut actors = trusted_actors;
-            actors.push(Actor::default());
+            actors.push(PublicKey::random(&mut rng));
             actors
         };
 
