@@ -10,8 +10,6 @@ pub enum Error {
     IO(#[from] std::io::Error),
     #[error("The operation requested assumes we have at least one member")]
     NoMembers,
-    #[error("Vote has an invalid signature")]
-    InvalidSignature(#[from] signature::Error),
     #[error("Packet was not destined for this actor: {dest:?} != {actor:?}")]
     WrongDestination { dest: PublicKey, actor: PublicKey },
     #[error(
@@ -58,4 +56,12 @@ pub enum Error {
     InvalidVoteInHistory(Vote),
     #[error("Failed to encode with bincode")]
     Encoding(#[from] bincode::Error),
+
+    #[cfg(feature = "ed25519")]
+    #[error("Ed25519 Error {0}")]
+    Ed25519(#[from] crate::ed25519::Error),
+
+    #[cfg(feature = "blsttc")]
+    #[error("Blsttc Error {0}")]
+    Blsttc(#[from] crate::blsttc::Error),
 }
