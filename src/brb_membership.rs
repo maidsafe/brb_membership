@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 
-use crate::{Actor, Error, Sig, SigningActor};
+use crate::{Error, PublicKey, SecretKey, Signature};
 use core::fmt::Debug;
 use log::info;
 
@@ -10,23 +11,23 @@ const SOFT_MAX_MEMBERS: usize = 7;
 pub type Generation = u64;
 
 #[derive(Debug)]
-pub struct State<A: Ord, SA, S: Ord> {
-    pub id: SA,
+pub struct State {
+    pub secret_key: SecretKey,
     pub gen: Generation,
     pub pending_gen: Generation,
-    pub forced_reconfigs: BTreeMap<Generation, BTreeSet<Reconfig<A>>>,
-    pub history: BTreeMap<Generation, Vote<A, S>>, // for onboarding new procs, the vote proving super majority
-    pub votes: BTreeMap<A, Vote<A, S>>,
+    pub forced_reconfigs: BTreeMap<Generation, BTreeSet<Reconfig>>,
+    pub history: BTreeMap<Generation, Vote>, // for onboarding new procs, the vote proving super majority
+    pub votes: BTreeMap<PublicKey, Vote>,
     pub faulty: bool,
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum Reconfig<A> {
-    Join(A),
-    Leave(A),
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Reconfig {
+    Join(PublicKey),
+    Leave(PublicKey),
 }
 
-impl<A: Debug> std::fmt::Debug for Reconfig<A> {
+impl std::fmt::Debug for Reconfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Reconfig::Join(a) => write!(f, "J{:?}", a),
@@ -35,8 +36,8 @@ impl<A: Debug> std::fmt::Debug for Reconfig<A> {
     }
 }
 
-impl<A: Ord> Reconfig<A> {
-    fn apply(self, members: &mut BTreeSet<A>) {
+impl Reconfig {
+    fn apply(self, members: &mut BTreeSet<PublicKey>) {
         match self {
             Reconfig::Join(p) => members.insert(p),
             Reconfig::Leave(p) => members.remove(&p),
@@ -45,17 +46,13 @@ impl<A: Ord> Reconfig<A> {
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum Ballot<A: Ord, S: Ord> {
-    Propose(Reconfig<A>),
-    Merge(BTreeSet<Vote<A, S>>),
-    SuperMajority(BTreeSet<Vote<A, S>>),
+pub enum Ballot {
+    Propose(Reconfig),
+    Merge(BTreeSet<Vote>),
+    SuperMajority(BTreeSet<Vote>),
 }
 
-impl<A, S> std::fmt::Debug for Ballot<A, S>
-where
-    A: Ord + Debug,
-    S: Ord + Debug,
-{
+impl std::fmt::Debug for Ballot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Ballot::Propose(r) => write!(f, "P({:?})", r),
@@ -65,10 +62,8 @@ where
     }
 }
 
-fn simplify_votes<A: Ord + Clone, S: Ord + Clone>(
-    votes: &BTreeSet<Vote<A, S>>,
-) -> BTreeSet<Vote<A, S>> {
-    let mut simpler_votes: BTreeSet<Vote<A, S>> = Default::default();
+fn simplify_votes(votes: &BTreeSet<Vote>) -> BTreeSet<Vote> {
+    let mut simpler_votes: BTreeSet<Vote> = Default::default();
     for v in votes.iter() {
         let mut this_vote_is_superseded = false;
         for other_v in votes.iter() {
@@ -78,18 +73,13 @@ fn simplify_votes<A: Ord + Clone, S: Ord + Clone>(
         }
 
         if !this_vote_is_superseded {
-            let v_cloned: Vote<A, S> = v.clone();
-            simpler_votes.insert(v_cloned);
+            simpler_votes.insert(v.clone());
         }
     }
     simpler_votes
 }
 
-impl<A, S> Ballot<A, S>
-where
-    A: Ord + Clone,
-    S: Ord + Clone,
-{
+impl Ballot {
     fn simplify(&self) -> Self {
         match &self {
             Ballot::Propose(_) => self.clone(), // already in simplest form
@@ -100,33 +90,25 @@ where
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Vote<A: Ord, S: Ord> {
+pub struct Vote {
     pub gen: Generation,
-    pub ballot: Ballot<A, S>,
-    pub voter: A,
-    pub sig: S,
+    pub ballot: Ballot,
+    pub voter: PublicKey,
+    pub sig: Signature,
 }
 
-impl<A, S> Debug for Vote<A, S>
-where
-    A: Ord + Debug,
-    S: Ord + Debug,
-{
+impl Debug for Vote {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}@{:?}G{}", self.ballot, self.voter, self.gen)
     }
 }
 
-impl<A, S> Vote<A, S>
-where
-    A: Ord + Clone,
-    S: Ord + Clone,
-{
+impl Vote {
     pub fn is_super_majority_ballot(&self) -> bool {
         matches!(self.ballot, Ballot::SuperMajority(_))
     }
 
-    fn unpack_votes(&self) -> BTreeSet<&Vote<A, S>> {
+    fn unpack_votes(&self) -> BTreeSet<&Vote> {
         match &self.ballot {
             Ballot::Propose(_) => std::iter::once(self).collect(),
             Ballot::Merge(votes) | Ballot::SuperMajority(votes) => std::iter::once(self)
@@ -135,18 +117,16 @@ where
         }
     }
 
-    fn reconfigs(&self) -> BTreeSet<(A, Reconfig<A>)> {
+    fn reconfigs(&self) -> BTreeSet<(PublicKey, Reconfig)> {
         match &self.ballot {
-            Ballot::Propose(reconfig) => vec![(self.voter.clone(), reconfig.clone())]
-                .into_iter()
-                .collect(),
+            Ballot::Propose(reconfig) => BTreeSet::from_iter([(self.voter, *reconfig)]),
             Ballot::Merge(votes) | Ballot::SuperMajority(votes) => {
                 votes.iter().flat_map(|v| v.reconfigs()).collect()
             }
         }
     }
 
-    fn supersedes(&self, vote: &Vote<A, S>) -> bool {
+    fn supersedes(&self, vote: &Vote) -> bool {
         if self == vote {
             true
         } else {
@@ -161,41 +141,29 @@ where
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VoteMsg<A: Ord, S: Ord> {
-    pub vote: Vote<A, S>,
-    pub dest: A,
+pub struct VoteMsg {
+    pub vote: Vote,
+    pub dest: PublicKey,
 }
 
-impl<A, SA, S> Default for State<A, SA, S>
-where
-    A: Actor<S>,
-    SA: SigningActor<A, S>,
-    S: Sig,
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<A, SA, S> State<A, SA, S>
-where
-    A: Actor<S>,
-    SA: SigningActor<A, S>,
-    S: Sig,
-{
-    pub fn new() -> Self {
-        Self {
-            id: SA::default(),
+impl State {
+    pub fn random(mut rng: impl Rng + CryptoRng) -> State {
+        State {
+            secret_key: SecretKey::random(&mut rng),
             gen: 0,
             pending_gen: 0,
-            forced_reconfigs: BTreeMap::default(),
-            history: BTreeMap::default(),
-            votes: BTreeMap::default(),
+            forced_reconfigs: Default::default(),
+            history: Default::default(),
+            votes: Default::default(),
             faulty: false,
         }
     }
 
-    pub fn force_join(&mut self, actor: A) {
+    pub fn public_key(&self) -> PublicKey {
+        self.secret_key.public_key()
+    }
+
+    pub fn force_join(&mut self, actor: PublicKey) {
         let forced_reconfigs = self.forced_reconfigs.entry(self.gen).or_default();
 
         // remove any leave reconfigs for this actor
@@ -203,7 +171,7 @@ where
         forced_reconfigs.insert(Reconfig::Join(actor));
     }
 
-    pub fn force_leave(&mut self, actor: A) {
+    pub fn force_leave(&mut self, actor: PublicKey) {
         let forced_reconfigs = self.forced_reconfigs.entry(self.gen).or_default();
 
         // remove any leave reconfigs for this actor
@@ -211,7 +179,7 @@ where
         forced_reconfigs.insert(Reconfig::Leave(actor));
     }
 
-    pub fn members(&self, gen: Generation) -> Result<BTreeSet<A>, Error<A, S>> {
+    pub fn members(&self, gen: Generation) -> Result<BTreeSet<PublicKey>, Error> {
         let mut members = BTreeSet::new();
 
         self.forced_reconfigs
@@ -252,16 +220,18 @@ where
         Err(Error::InvalidGeneration(gen))
     }
 
-    pub fn propose(&mut self, reconfig: Reconfig<A>) -> Result<Vec<VoteMsg<A, S>>, Error<A, S>> {
+    pub fn propose(&mut self, reconfig: Reconfig) -> Result<Vec<VoteMsg>, Error> {
         let vote = self.build_vote(self.gen + 1, Ballot::Propose(reconfig))?;
         self.validate_vote(&vote)?;
         self.cast_vote(vote)
     }
 
-    pub fn anti_entropy(&self, from_gen: Generation, actor: A) -> Vec<VoteMsg<A, S>> {
+    pub fn anti_entropy(&self, from_gen: Generation, actor: PublicKey) -> Vec<VoteMsg> {
         info!(
             "[MBR] anti-entropy for {:?}.{} from {:?}",
-            actor, from_gen, self.id
+            actor,
+            from_gen,
+            self.public_key()
         );
 
         let mut msgs: Vec<_> = self
@@ -276,7 +246,7 @@ where
         msgs
     }
 
-    pub fn handle_vote(&mut self, vote: Vote<A, S>) -> Result<Vec<VoteMsg<A, S>>, Error<A, S>> {
+    pub fn handle_vote(&mut self, vote: Vote) -> Result<Vec<VoteMsg>, Error> {
         self.validate_vote(&vote)?;
 
         self.log_vote(&vote);
@@ -289,7 +259,7 @@ where
                 Ballot::Merge(self.votes.values().cloned().collect()).simplify(),
             )?;
 
-            if let Some(our_vote) = self.votes.get(&self.id.actor()) {
+            if let Some(our_vote) = self.votes.get(&self.public_key()) {
                 let reconfigs_we_voted_for: BTreeSet<_> =
                     our_vote.reconfigs().into_iter().map(|(_, r)| r).collect();
                 let reconfigs_we_would_vote_for: BTreeSet<_> =
@@ -309,15 +279,15 @@ where
             info!("[MBR] Detected super majority over super majorities");
 
             // store a proof of what the network decided in our history so that we can onboard future procs.
-            let sm_vote = if self.members(self.gen)?.contains(&self.id.actor()) {
+            let sm_vote = if self.members(self.gen)?.contains(&self.public_key()) {
                 // we were a member during this generation, log the votes we have seen as our history.
                 let ballot =
                     Ballot::SuperMajority(self.votes.values().cloned().collect()).simplify();
 
                 let blob_bytes = bincode::serialize(&(&ballot, &self.pending_gen))?;
                 Some(Vote {
-                    voter: self.id.actor(),
-                    sig: self.id.sign(&blob_bytes),
+                    voter: self.public_key(),
+                    sig: self.secret_key.sign(&blob_bytes),
                     gen: self.pending_gen,
                     ballot,
                 })
@@ -347,7 +317,7 @@ where
         if self.is_super_majority(&self.votes.values().cloned().collect())? {
             info!("[MBR] Detected super majority");
 
-            if let Some(our_vote) = self.votes.get(&self.id.actor()) {
+            if let Some(our_vote) = self.votes.get(&self.public_key()) {
                 // We voted during this generation.
 
                 // We may have committed to some reconfigs that is not part of this super majority.
@@ -384,7 +354,7 @@ where
 
         // We have determined that we don't yet have enough votes to take action.
         // If we have not yet voted, this is where we would contribute our vote
-        if !self.votes.contains_key(&self.id.actor()) {
+        if !self.votes.contains_key(&self.public_key()) {
             let vote = self.build_vote(self.pending_gen, vote.ballot)?;
             return self.cast_vote(vote);
         }
@@ -392,23 +362,23 @@ where
         Ok(vec![])
     }
 
-    fn build_vote(&self, gen: Generation, ballot: Ballot<A, S>) -> Result<Vote<A, S>, Error<A, S>> {
+    fn build_vote(&self, gen: Generation, ballot: Ballot) -> Result<Vote, Error> {
         let blob_bytes = bincode::serialize(&(&ballot, &gen))?;
         Ok(Vote {
-            voter: self.id.actor(),
-            sig: self.id.sign(&blob_bytes),
+            voter: self.public_key(),
+            sig: self.secret_key.sign(&blob_bytes),
             ballot,
             gen,
         })
     }
 
-    fn cast_vote(&mut self, vote: Vote<A, S>) -> Result<Vec<VoteMsg<A, S>>, Error<A, S>> {
+    fn cast_vote(&mut self, vote: Vote) -> Result<Vec<VoteMsg>, Error> {
         self.pending_gen = vote.gen;
         self.log_vote(&vote);
         self.broadcast(vote)
     }
 
-    fn log_vote(&mut self, vote: &Vote<A, S>) {
+    fn log_vote(&mut self, vote: &Vote) {
         for vote in vote.unpack_votes() {
             let existing_vote = self.votes.entry(vote.voter).or_insert_with(|| vote.clone());
             if vote.supersedes(existing_vote) {
@@ -417,8 +387,8 @@ where
         }
     }
 
-    fn count_votes(&self, votes: &BTreeSet<Vote<A, S>>) -> BTreeMap<BTreeSet<Reconfig<A>>, usize> {
-        let mut count: BTreeMap<BTreeSet<Reconfig<A>>, usize> = Default::default();
+    fn count_votes(&self, votes: &BTreeSet<Vote>) -> BTreeMap<BTreeSet<Reconfig>, usize> {
+        let mut count: BTreeMap<BTreeSet<Reconfig>, usize> = Default::default();
 
         for vote in votes.iter() {
             let c = count
@@ -435,7 +405,7 @@ where
         count
     }
 
-    fn is_split_vote(&self, votes: &BTreeSet<Vote<A, S>>) -> Result<bool, Error<A, S>> {
+    fn is_split_vote(&self, votes: &BTreeSet<Vote>) -> Result<bool, Error> {
         let counts = self.count_votes(votes);
         let most_votes = counts.values().max().cloned().unwrap_or_default();
         let members = self.members(self.gen)?;
@@ -448,7 +418,7 @@ where
         Ok(3 * voters.len() > 2 * members.len() && 3 * predicted_votes <= 2 * members.len())
     }
 
-    fn is_super_majority(&self, votes: &BTreeSet<Vote<A, S>>) -> Result<bool, Error<A, S>> {
+    fn is_super_majority(&self, votes: &BTreeSet<Vote>) -> Result<bool, Error> {
         // TODO: super majority should always just be the largest 7 members
         let most_votes = self
             .count_votes(votes)
@@ -463,8 +433,8 @@ where
 
     fn is_super_majority_over_super_majorities(
         &self,
-        votes: &BTreeSet<Vote<A, S>>,
-    ) -> Result<bool, Error<A, S>> {
+        votes: &BTreeSet<Vote>,
+    ) -> Result<bool, Error> {
         let winning_reconfigs = self.resolve_votes(votes);
 
         let count_of_super_majorities = votes
@@ -482,7 +452,7 @@ where
         Ok(3 * count_of_super_majorities > 2 * self.members(self.gen)?.len())
     }
 
-    fn resolve_votes(&self, votes: &BTreeSet<Vote<A, S>>) -> BTreeSet<Reconfig<A>> {
+    fn resolve_votes(&self, votes: &BTreeSet<Vote>) -> BTreeSet<Reconfig> {
         let (winning_reconfigs, _) = self
             .count_votes(votes)
             .into_iter()
@@ -492,7 +462,7 @@ where
         winning_reconfigs
     }
 
-    pub fn validate_vote(&self, vote: &Vote<A, S>) -> Result<(), Error<A, S>> {
+    pub fn validate_vote(&self, vote: &Vote) -> Result<(), Error> {
         let members = self.members(self.gen)?;
         let blob_bytes = bincode::serialize(&(&vote.ballot, &vote.gen))?;
 
@@ -523,14 +493,14 @@ where
             // This is a vote for this generation
 
             // Ensure that nobody is trying to change their reconfig's.
-            let reconfigs: BTreeSet<(A, Reconfig<A>)> = self
+            let reconfigs: BTreeSet<(PublicKey, Reconfig)> = self
                 .votes
                 .values()
                 .flat_map(|v| v.reconfigs())
                 .chain(vote.reconfigs())
                 .collect();
 
-            let voters: BTreeSet<A> = reconfigs.iter().map(|(actor, _)| *actor).collect();
+            let voters: BTreeSet<PublicKey> = reconfigs.iter().map(|(actor, _)| *actor).collect();
             if voters.len() != reconfigs.len() {
                 Err(Error::VoterChangedMind { reconfigs })
             } else {
@@ -539,7 +509,7 @@ where
         }
     }
 
-    fn validate_ballot(&self, gen: Generation, ballot: &Ballot<A, S>) -> Result<(), Error<A, S>> {
+    fn validate_ballot(&self, gen: Generation, ballot: &Ballot) -> Result<(), Error> {
         match ballot {
             Ballot::Propose(reconfig) => self.validate_reconfig(reconfig),
             Ballot::Merge(votes) => {
@@ -585,7 +555,7 @@ where
         }
     }
 
-    pub fn validate_reconfig(&self, reconfig: &Reconfig<A>) -> Result<(), Error<A, S>> {
+    pub fn validate_reconfig(&self, reconfig: &Reconfig) -> Result<(), Error> {
         let members = self.members(self.gen)?;
         match reconfig {
             Reconfig::Join(actor) => {
@@ -613,7 +583,7 @@ where
         }
     }
 
-    fn broadcast(&self, vote: Vote<A, S>) -> Result<Vec<VoteMsg<A, S>>, Error<A, S>> {
+    fn broadcast(&self, vote: Vote) -> Result<Vec<VoteMsg>, Error> {
         Ok(self
             .members(self.gen)?
             .iter()
@@ -622,7 +592,7 @@ where
             .collect())
     }
 
-    fn send(&self, vote: Vote<A, S>, dest: A) -> VoteMsg<A, S> {
+    fn send(&self, vote: Vote, dest: PublicKey) -> VoteMsg {
         VoteMsg { vote, dest }
     }
 }

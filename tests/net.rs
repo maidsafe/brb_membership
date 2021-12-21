@@ -3,19 +3,12 @@ use std::fs::File;
 use std::io::Write;
 
 //use brb_membership::{Error, Generation, Reconfig, State, VoteMsg};
-pub use brb_membership::actor::ed25519::{Actor, Sig, SigningActor};
-use brb_membership::{Generation, SigningActor as SigningActorTrait};
-
-pub type Vote = brb_membership::Vote<Actor, Sig>;
-pub type VoteMsg = brb_membership::VoteMsg<Actor, Sig>;
-pub type State = brb_membership::State<Actor, SigningActor, Sig>;
-pub type Reconfig = brb_membership::Reconfig<Actor>;
-pub type Error = brb_membership::Error<Actor, Sig>;
-pub type Ballot = brb_membership::Ballot<Actor, Sig>;
+use brb_membership::{Error, Generation, PublicKey, Reconfig, State, VoteMsg};
+use rand::{CryptoRng, Rng};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Packet {
-    pub source: Actor,
+    pub source: PublicKey,
     pub vote_msg: VoteMsg,
 }
 
@@ -23,29 +16,29 @@ pub struct Packet {
 pub struct Net {
     pub procs: Vec<State>,
     pub reconfigs_by_gen: BTreeMap<Generation, BTreeSet<Reconfig>>,
-    pub members_at_gen: BTreeMap<Generation, BTreeSet<Actor>>,
-    pub packets: BTreeMap<Actor, VecDeque<Packet>>,
+    pub members_at_gen: BTreeMap<Generation, BTreeSet<PublicKey>>,
+    pub packets: BTreeMap<PublicKey, VecDeque<Packet>>,
     pub delivered_packets: Vec<Packet>,
 }
 
 impl Net {
-    pub fn with_procs(n: usize) -> Self {
-        let mut procs: Vec<_> = (0..n).into_iter().map(|_| State::default()).collect();
-        procs.sort_by_key(|p| p.id.actor());
+    pub fn with_procs(n: usize, mut rng: impl Rng + CryptoRng) -> Self {
+        let mut procs = Vec::from_iter((0..n).into_iter().map(|_| State::random(&mut rng)));
+        procs.sort_by_key(|p| p.secret_key.public_key());
         Self {
             procs,
             ..Default::default()
         }
     }
 
-    pub fn genesis(&self) -> Result<Actor, Error> {
+    pub fn genesis(&self) -> Result<PublicKey, Error> {
         self.procs
             .get(0)
-            .map(|p| p.id.actor())
+            .map(State::public_key)
             .ok_or(Error::NoMembers)
     }
 
-    pub fn deliver_packet_from_source(&mut self, source: Actor) -> Result<(), Error> {
+    pub fn deliver_packet_from_source(&mut self, source: PublicKey) -> Result<(), Error> {
         let packet = match self.packets.get_mut(&source).map(|ps| ps.pop_front()) {
             Some(Some(p)) => p,
             _ => return Ok(()), // nothing to do
@@ -57,7 +50,7 @@ impl Net {
 
         self.delivered_packets.push(packet.clone());
 
-        let dest_proc_opt = self.procs.iter_mut().find(|p| p.id.actor() == dest);
+        let dest_proc_opt = self.procs.iter_mut().find(|p| p.public_key() == dest);
 
         let dest_proc = match dest_proc_opt {
             Some(proc) => proc,
@@ -74,7 +67,7 @@ impl Net {
         println!("[NET] resp: {:#?}", resp);
         match resp {
             Ok(vote_msgs) => {
-                let dest_actor = dest_proc.id.actor();
+                let dest_actor = dest_proc.public_key();
                 self.enqueue_packets(vote_msgs.into_iter().map(|vote_msg| Packet {
                     source: dest_actor,
                     vote_msg,
@@ -101,7 +94,7 @@ impl Net {
             Err(err) => return Err(err),
         }
 
-        match self.procs.iter().find(|p| p.id.actor() == dest) {
+        match self.procs.iter().find(|p| p.public_key() == dest) {
             Some(proc) if !proc.faulty => {
                 let (mut proc_members, gen) = (proc.members(proc.gen)?, proc.gen);
 
@@ -141,16 +134,16 @@ impl Net {
             .collect();
     }
 
-    pub fn force_join(&mut self, p: Actor, q: Actor) {
-        if let Some(proc) = self.procs.iter_mut().find(|proc| proc.id.actor() == p) {
+    pub fn force_join(&mut self, p: PublicKey, q: PublicKey) {
+        if let Some(proc) = self.procs.iter_mut().find(|proc| proc.public_key() == p) {
             proc.force_join(q);
         }
     }
 
     pub fn enqueue_anti_entropy(&mut self, i: usize, j: usize) {
         let i_gen = self.procs[i].gen;
-        let i_actor = self.procs[i].id.actor();
-        let j_actor = self.procs[j].id.actor();
+        let i_actor = self.procs[i].public_key();
+        let j_actor = self.procs[j].public_key();
 
         self.enqueue_packets(self.procs[j].anti_entropy(i_gen, i_actor).into_iter().map(
             |vote_msg| Packet {
@@ -171,7 +164,7 @@ msc {\n
         let procs = self
             .procs
             .iter()
-            .map(|p| p.id.actor())
+            .map(|p| p.public_key())
             .collect::<BTreeSet<_>>() // sort by actor id
             .into_iter()
             .map(|id| format!("{:?}", id))
@@ -190,7 +183,7 @@ msc {\n
 
         // Replace process identifiers with friendlier numbers
         // 1, 2, 3 ... instead of i:3b2, i:7def, ...
-        for (idx, proc_id) in self.procs.iter().map(|p| p.id.actor()).enumerate() {
+        for (idx, proc_id) in self.procs.iter().map(State::public_key).enumerate() {
             let proc_id_as_str = format!("{}", proc_id);
             msc = msc.replace(&proc_id_as_str, &format!("{}", idx + 1));
         }
