@@ -1,11 +1,16 @@
+use blsttc::{serde_impl::SerdeSecret, SecretKeyShare};
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
-use signature::{Signer, Verifier};
+use thiserror::Error;
 
-pub type Error = signature::Error;
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("Invalid Signature")]
+    InvalidSignature,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PublicKey(ed25519::PublicKey);
+pub struct PublicKey(blsttc::PublicKeyShare);
 
 impl PublicKey {
     pub fn random(rng: impl Rng + CryptoRng) -> Self {
@@ -13,7 +18,11 @@ impl PublicKey {
     }
 
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), Error> {
-        self.0.verify(msg, &signature.0)
+        if self.0.verify(&signature.0, msg) {
+            Ok(())
+        } else {
+            Err(Error::InvalidSignature)
+        }
     }
 }
 
@@ -25,15 +34,15 @@ impl core::fmt::Display for PublicKey {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SecretKey(ed25519::Keypair);
+pub struct SecretKey(SerdeSecret<SecretKeyShare>);
 
 impl SecretKey {
     pub fn random(mut rng: impl Rng + CryptoRng) -> Self {
-        Self(ed25519::Keypair::generate(&mut rng))
+        Self(SerdeSecret(rng.gen()))
     }
 
     pub fn public_key(&self) -> PublicKey {
-        PublicKey(self.0.public)
+        PublicKey(self.0 .0.public_key_share())
     }
 
     pub fn sign(&self, msg: &[u8]) -> Signature {
@@ -41,8 +50,8 @@ impl SecretKey {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Signature(ed25519::Signature);
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Signature(blsttc::SignatureShare);
 
 impl PartialOrd for PublicKey {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {

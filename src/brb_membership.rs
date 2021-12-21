@@ -121,7 +121,7 @@ impl Vote {
         match &self.ballot {
             Ballot::Propose(reconfig) => BTreeSet::from_iter([(self.voter, *reconfig)]),
             Ballot::Merge(votes) | Ballot::SuperMajority(votes) => {
-                votes.iter().flat_map(|v| v.reconfigs()).collect()
+                BTreeSet::from_iter(votes.iter().flat_map(|v| v.reconfigs()))
             }
         }
     }
@@ -409,8 +409,8 @@ impl State {
         let counts = self.count_votes(votes);
         let most_votes = counts.values().max().cloned().unwrap_or_default();
         let members = self.members(self.gen)?;
-        let voters = &votes.iter().map(|v| v.voter).collect();
-        let remaining_voters = members.difference(voters).count();
+        let voters = BTreeSet::from_iter(votes.iter().map(|v| v.voter));
+        let remaining_voters = members.difference(&voters).count();
 
         // give the remaining votes to the reconfigs with the most votes.
         let predicted_votes = most_votes + remaining_voters;
@@ -500,7 +500,7 @@ impl State {
                 .chain(vote.reconfigs())
                 .collect();
 
-            let voters: BTreeSet<PublicKey> = reconfigs.iter().map(|(actor, _)| *actor).collect();
+            let voters = BTreeSet::from_iter(reconfigs.iter().map(|(actor, _)| actor));
             if voters.len() != reconfigs.len() {
                 Err(Error::VoterChangedMind { reconfigs })
             } else {
@@ -511,7 +511,7 @@ impl State {
 
     fn validate_ballot(&self, gen: Generation, ballot: &Ballot) -> Result<(), Error> {
         match ballot {
-            Ballot::Propose(reconfig) => self.validate_reconfig(reconfig),
+            Ballot::Propose(reconfig) => self.validate_reconfig(*reconfig),
             Ballot::Merge(votes) => {
                 for vote in votes.iter() {
                     if vote.gen != gen {
@@ -555,13 +555,13 @@ impl State {
         }
     }
 
-    pub fn validate_reconfig(&self, reconfig: &Reconfig) -> Result<(), Error> {
+    pub fn validate_reconfig(&self, reconfig: Reconfig) -> Result<(), Error> {
         let members = self.members(self.gen)?;
         match reconfig {
             Reconfig::Join(actor) => {
-                if members.contains(actor) {
+                if members.contains(&actor) {
                     Err(Error::JoinRequestForExistingMember {
-                        requester: *actor,
+                        requester: actor,
                         members,
                     })
                 } else if members.len() >= SOFT_MAX_MEMBERS {
@@ -571,9 +571,9 @@ impl State {
                 }
             }
             Reconfig::Leave(actor) => {
-                if !members.contains(actor) {
+                if !members.contains(&actor) {
                     Err(Error::LeaveRequestForNonMember {
-                        requester: *actor,
+                        requester: actor,
                         members,
                     })
                 } else {

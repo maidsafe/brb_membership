@@ -182,7 +182,12 @@ fn test_reject_votes_with_invalid_signatures() -> Result<(), Error> {
         sig,
     });
 
-    assert!(matches!(resp, Err(Error::InvalidSignature(_))));
+    #[cfg(feature = "blsttc")]
+    assert!(matches!(resp, Err(Error::Blsttc(_))));
+
+    #[cfg(feature = "ed25519")]
+    assert!(matches!(resp, Err(Error::Ed25519(_))));
+
     Ok(())
 }
 
@@ -721,7 +726,7 @@ quickcheck! {
         // TODO: everyone that a proc at G considers a member is also at generation G
 
         for (gen, reconfigs) in net.reconfigs_by_gen.iter() {
-            let members_at_prev_gen = net.members_at_gen[&(gen - 1)].clone();
+            let members_at_prev_gen = &net.members_at_gen[&(gen - 1)];
             let members_at_curr_gen = net.members_at_gen[gen].clone();
             let mut reconfigs_applied: BTreeSet<&Reconfig> = Default::default();
             for reconfig in reconfigs {
@@ -765,8 +770,8 @@ quickcheck! {
             .chain(vec![proc.public_key()])
             .collect();
 
-        for a in trusted_actors.iter() {
-            proc.force_join(*a);
+        for a in trusted_actors.iter().copied() {
+            proc.force_join(a);
         }
 
         let all_actors = {
@@ -781,7 +786,7 @@ quickcheck! {
             false => Reconfig::Leave(actor),
         };
 
-        let valid_res = proc.validate_reconfig(&reconfig);
+        let valid_res = proc.validate_reconfig(reconfig);
         let proc_members = proc.members(proc.gen)?;
         match reconfig {
             Reconfig::Join(actor) => {
