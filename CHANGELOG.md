@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.1.0](https://github.com/maidsafe/brb_membership/compare/v1.0.12...v1.1.0) (2021-12-21)
+
+
+### Features
+
+* **blsttc:** add support for blsttc ([0524047](https://github.com/maidsafe/brb_membership/commit/0524047047506898373853698c77268c2fc19cf7))
+
 ### [1.0.12](https://github.com/maidsafe/brb_membership/compare/v1.0.11...v1.0.12) (2021-12-21)
 
 ### [1.0.11](https://github.com/maidsafe/brb_membership/compare/v1.0.10...v1.0.11) (2021-12-20)
