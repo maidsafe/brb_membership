@@ -2,7 +2,7 @@ use core::fmt::Debug;
 use std::collections::BTreeSet;
 use thiserror::Error;
 
-use crate::{Ballot, Generation, PublicKey, Reconfig, Vote};
+use crate::{Ballot, Generation, PublicKey, Reconfig, SignedVote};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -28,6 +28,11 @@ pub enum Error {
         requester: PublicKey,
         members: BTreeSet<PublicKey>,
     },
+    #[error("A merged vote must be from the same generation as the child vote: {child_gen} != {merge_gen}")]
+    MergedVotesMustBeFromSameGen {
+        child_gen: Generation,
+        merge_gen: Generation,
+    },
     #[error("A vote is always for the next generation: vote gen {vote_gen} != {gen} + 1, pending gen: {pending_gen}")]
     VoteNotForNextGeneration {
         vote_gen: Generation,
@@ -44,7 +49,7 @@ pub enum Error {
         reconfigs: BTreeSet<(PublicKey, Reconfig)>,
     },
     #[error("Existing vote {existing_vote:?} not compatible with new vote")]
-    ExistingVoteIncompatibleWithNewVote { existing_vote: Vote },
+    ExistingVoteIncompatibleWithNewVote { existing_vote: SignedVote },
     #[error("The super majority ballot does not actually have supermajority: {ballot:?} (members: {members:?})")]
     SuperMajorityBallotIsNotSuperMajority {
         ballot: Ballot,
@@ -53,7 +58,7 @@ pub enum Error {
     #[error("Invalid generation {0}")]
     InvalidGeneration(Generation),
     #[error("History contains an invalid vote {0:?}")]
-    InvalidVoteInHistory(Vote),
+    InvalidVoteInHistory(SignedVote),
     #[error("Failed to encode with bincode")]
     Encoding(#[from] bincode::Error),
 

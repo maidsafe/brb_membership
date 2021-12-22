@@ -12,7 +12,7 @@ pub mod blsttc;
 #[cfg(feature = "ed25519")]
 pub mod ed25519;
 
-pub use crate::brb_membership::{Ballot, Generation, Reconfig, State, Vote, VoteMsg};
+pub use crate::brb_membership::{Ballot, Generation, Reconfig, SignedVote, State, Vote, VoteMsg};
 
 #[cfg(feature = "blsttc")]
 pub use crate::blsttc::{PublicKey, SecretKey, Signature};

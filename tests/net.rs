@@ -63,7 +63,7 @@ impl Net {
         let dest_members = dest_proc.members(dest_proc.gen)?;
         let vote = packet.vote_msg.vote;
 
-        let resp = dest_proc.handle_vote(vote);
+        let resp = dest_proc.handle_signed_vote(vote);
         println!("[NET] resp: {:#?}", resp);
         match resp {
             Ok(vote_msgs) => {
