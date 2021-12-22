@@ -5,7 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod net;
 
-use brb_membership::{Ballot, Error, Generation, PublicKey, Reconfig, SecretKey, State, Vote};
+use brb_membership::{
+    Ballot, Error, Generation, PublicKey, Reconfig, SecretKey, SignedVote, State,
+};
 use crdts::quickcheck::{quickcheck, Arbitrary, Gen, TestResult};
 
 #[test]
@@ -154,7 +156,7 @@ fn test_handle_vote_rejects_packet_from_previous_gen() -> Result<(), Error> {
     for packet in stale_packets {
         let vote = packet.vote_msg.vote;
         assert!(matches!(
-            net.procs[0].handle_vote(vote),
+            net.procs[0].handle_signed_vote(vote),
             Err(Error::VoteNotForNextGeneration {
                 vote_gen: 1,
                 gen: 1,
@@ -175,7 +177,7 @@ fn test_reject_votes_with_invalid_signatures() -> Result<(), Error> {
     let voter = PublicKey::random(&mut rng);
     let bytes = bincode::serialize(&(&ballot, &gen))?;
     let sig = SecretKey::random(&mut rng).sign(&bytes);
-    let resp = proc.handle_vote(Vote {
+    let resp = proc.handle_signed_vote(SignedVote {
         gen,
         ballot,
         voter,
