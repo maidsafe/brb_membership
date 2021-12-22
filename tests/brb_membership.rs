@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 mod net;
 
 use brb_membership::{
-    Ballot, Error, Generation, PublicKey, Reconfig, SecretKey, SignedVote, State,
+    Ballot, Error, Generation, PublicKey, Reconfig, SecretKey, SignedVote, State, Vote,
 };
 use crdts::quickcheck::{quickcheck, Arbitrary, Gen, TestResult};
 
@@ -177,12 +177,8 @@ fn test_reject_votes_with_invalid_signatures() -> Result<(), Error> {
     let voter = PublicKey::random(&mut rng);
     let bytes = bincode::serialize(&(&ballot, &gen))?;
     let sig = SecretKey::random(&mut rng).sign(&bytes);
-    let resp = proc.handle_signed_vote(SignedVote {
-        gen,
-        ballot,
-        voter,
-        sig,
-    });
+    let vote = Vote { gen, ballot };
+    let resp = proc.handle_signed_vote(SignedVote { vote, voter, sig });
 
     #[cfg(feature = "blsttc")]
     assert!(matches!(resp, Err(Error::Blsttc(_))));
@@ -525,7 +521,10 @@ fn test_prop_interpreter_qc1() -> Result<(), Error> {
     }
 
     for p in net.procs.iter() {
-        assert!(p.history.iter().all(|(_, v)| v.is_super_majority_ballot()));
+        assert!(p
+            .history
+            .iter()
+            .all(|(_, v)| v.vote.is_super_majority_ballot()));
     }
     Ok(())
 }
