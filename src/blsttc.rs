@@ -7,6 +7,8 @@ use thiserror::Error;
 pub enum Error {
     #[error("Invalid Signature")]
     InvalidSignature,
+    #[error("Blsttc error: {0}")]
+    Blsttc(#[from] blsttc::error::FromBytesError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +26,11 @@ impl PublicKey {
             Err(Error::InvalidSignature)
         }
     }
+
+    pub fn public_key(&self) -> Result<blsttc::PublicKey, Error> {
+        let pk = blsttc::PublicKey::from_bytes(self.0.to_bytes())?;
+        Ok(pk)
+    }
 }
 
 impl core::fmt::Display for PublicKey {
@@ -37,6 +44,10 @@ impl core::fmt::Display for PublicKey {
 pub struct SecretKey(SerdeSecret<SecretKeyShare>);
 
 impl SecretKey {
+    pub fn from(secret_key_share: SecretKeyShare) -> Self {
+        Self(SerdeSecret(secret_key_share))
+    }
+
     pub fn random(mut rng: impl Rng + CryptoRng) -> Self {
         Self(SerdeSecret(rng.gen()))
     }

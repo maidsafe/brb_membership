@@ -166,6 +166,18 @@ pub struct VoteMsg {
 }
 
 impl State {
+    pub fn from(secret_key: SecretKey) -> State {
+        State {
+            secret_key,
+            gen: 0,
+            pending_gen: 0,
+            forced_reconfigs: Default::default(),
+            history: Default::default(),
+            votes: Default::default(),
+            faulty: false,
+        }
+    }
+
     pub fn random(mut rng: impl Rng + CryptoRng) -> State {
         State {
             secret_key: SecretKey::random(&mut rng),
