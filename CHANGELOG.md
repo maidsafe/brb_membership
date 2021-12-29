@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.2.0](https://github.com/maidsafe/brb_membership/compare/v1.1.1...v1.2.0) (2021-12-29)
+
+
+### Features
+
+* **api:** additinal general purpose public APIs ([b284b42](https://github.com/maidsafe/brb_membership/commit/b284b42ee6ec169dd6fafefcda2ae45a2e8475eb))
+
 ### [1.1.1](https://github.com/maidsafe/brb_membership/compare/v1.1.0...v1.1.1) (2021-12-22)
 
 ## [1.1.0](https://github.com/maidsafe/brb_membership/compare/v1.0.12...v1.1.0) (2021-12-21)
