@@ -30,8 +30,8 @@ pub enum Reconfig {
 impl std::fmt::Debug for Reconfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Reconfig::Join(a) => write!(f, "J{:?}", a),
-            Reconfig::Leave(a) => write!(f, "L{:?}", a),
+            Reconfig::Join(a) => write!(f, "J{}", a),
+            Reconfig::Leave(a) => write!(f, "L{}", a),
         }
     }
 }
@@ -118,7 +118,7 @@ pub struct SignedVote {
 
 impl Debug for SignedVote {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}@{:?}", self.vote, self.voter)
+        write!(f, "{:?}@{}", self.vote, self.voter)
     }
 }
 
