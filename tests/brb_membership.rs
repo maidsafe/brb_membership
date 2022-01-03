@@ -1,6 +1,9 @@
 use eyre::eyre;
 use net::{Net, Packet};
-use rand::{prelude::StdRng, SeedableRng};
+use rand::{
+    prelude::{IteratorRandom, StdRng},
+    Rng, SeedableRng,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod net;
@@ -8,7 +11,8 @@ mod net;
 use brb_membership::{
     Ballot, Error, Generation, PublicKey, Reconfig, SecretKey, SignedVote, State, Vote,
 };
-use crdts::quickcheck::{quickcheck, Arbitrary, Gen, TestResult};
+use quickcheck::{Arbitrary, Gen, TestResult};
+use quickcheck_macros::quickcheck;
 
 #[test]
 fn test_reject_changing_reconfig_when_one_is_in_progress() -> Result<(), Error> {
@@ -186,6 +190,8 @@ fn test_reject_votes_with_invalid_signatures() -> Result<(), Error> {
     #[cfg(feature = "ed25519")]
     assert!(matches!(resp, Err(Error::Ed25519(_))));
 
+    #[cfg(feature = "bad_crypto")]
+    assert!(matches!(resp, Err(Error::BadCrypto(_))));
     Ok(())
 }
 
@@ -346,17 +352,16 @@ fn test_onboarding_across_many_generations() -> eyre::Result<()> {
             vote_msg,
         });
     net.enqueue_packets(packets);
-    loop {
+    for _ in 0..3 {
         net.drain_queued_packets()?;
         for i in 0..3 {
             for j in 0..3 {
                 net.enqueue_anti_entropy(i, j);
             }
         }
-        if net.packets.is_empty() {
-            break;
-        }
     }
+    assert!(net.packets.is_empty());
+
     net.drain_queued_packets()?;
 
     let mut procs_by_gen: BTreeMap<Generation, Vec<State>> = Default::default();
@@ -417,7 +422,7 @@ enum Instruction {
     AntiEntropy(Generation, usize, usize),
 }
 impl Arbitrary for Instruction {
-    fn arbitrary<G: Gen>(g: &mut G) -> Self {
+    fn arbitrary(g: &mut Gen) -> Self {
         let p: usize = usize::arbitrary(g) % 7;
         let q: usize = usize::arbitrary(g) % 7;
         let gen: Generation = Generation::arbitrary(g) % 20;
@@ -482,7 +487,7 @@ impl Arbitrary for Instruction {
 }
 
 #[test]
-fn test_prop_interpreter_qc1() -> Result<(), Error> {
+fn test_interpreter_qc1() -> Result<(), Error> {
     let mut rng = StdRng::from_seed([0u8; 32]);
     let mut net = Net::with_procs(2, &mut rng);
     let p0 = net.procs[0].public_key();
@@ -508,17 +513,15 @@ fn test_prop_interpreter_qc1() -> Result<(), Error> {
     net.enqueue_anti_entropy(1, 0);
     net.enqueue_anti_entropy(1, 0);
 
-    loop {
+    for _ in 0..3 {
         net.drain_queued_packets()?;
         for i in 0..net.procs.len() {
             for j in 0..net.procs.len() {
                 net.enqueue_anti_entropy(i, j);
             }
         }
-        if net.packets.is_empty() {
-            break;
-        }
     }
+    assert!(net.packets.is_empty());
 
     for p in net.procs.iter() {
         assert!(p
@@ -530,7 +533,7 @@ fn test_prop_interpreter_qc1() -> Result<(), Error> {
 }
 
 #[test]
-fn test_prop_interpreter_qc2() -> Result<(), Error> {
+fn test_interpreter_qc2() -> Result<(), Error> {
     let mut rng = StdRng::from_seed([0u8; 32]);
     let mut net = Net::with_procs(3, &mut rng);
     let p0 = net.procs[0].public_key();
@@ -563,17 +566,17 @@ fn test_prop_interpreter_qc2() -> Result<(), Error> {
         });
     net.enqueue_packets(propose_packets);
 
-    loop {
-        net.drain_queued_packets()?;
+    for _ in 0..3 {
+        assert!(!net.packets.is_empty());
+        net.drain_queued_packets().unwrap();
         for i in 0..net.procs.len() {
             for j in 0..net.procs.len() {
                 net.enqueue_anti_entropy(i, j);
             }
         }
-        if net.packets.is_empty() {
-            break;
-        }
     }
+
+    assert!(net.packets.is_empty());
 
     // We should have no more pending votes.
     for p in net.procs.iter() {
@@ -583,232 +586,473 @@ fn test_prop_interpreter_qc2() -> Result<(), Error> {
     Ok(())
 }
 
-quickcheck! {
-    fn prop_interpreter(n: usize, instructions: Vec<Instruction>) -> eyre::Result<TestResult> {
-        let mut rng = StdRng::from_seed([0u8; 32]);
+#[test]
+fn test_interpreter_qc3() {
+    let mut rng = StdRng::from_seed([0u8; 32]);
+    let mut net = Net::with_procs(4, &mut rng);
+    let genesis = net.genesis().unwrap();
 
-        fn super_majority(m: usize, n: usize) -> bool {
-            3 * m > 2 * n
+    for proc in net.procs.iter_mut() {
+        proc.force_join(genesis);
+    }
+
+    // 1 requests to join genesis
+    let p = net.procs[1].public_key();
+    let reconfig = Reconfig::Join(p);
+    net.reconfigs_by_gen
+        .entry(net.procs[0].gen + 1)
+        .or_default()
+        .insert(reconfig);
+
+    let propose_packets = net.procs[0]
+        .propose(reconfig)
+        .unwrap()
+        .into_iter()
+        .map(|vote_msg| Packet {
+            source: genesis,
+            vote_msg,
+        });
+    net.enqueue_packets(propose_packets);
+
+    net.deliver_packet_from_source(genesis).unwrap();
+    net.deliver_packet_from_source(genesis).unwrap();
+
+    // 1 requests to leave genesis
+    let reconfig = Reconfig::Leave(p);
+    net.reconfigs_by_gen
+        .entry(net.procs[0].gen + 1)
+        .or_default()
+        .insert(reconfig);
+
+    let propose_packets = net.procs[0]
+        .propose(reconfig)
+        .unwrap()
+        .into_iter()
+        .map(|vote_msg| Packet {
+            source: genesis,
+            vote_msg,
+        });
+
+    net.enqueue_packets(propose_packets);
+
+    let q_actor = net.procs[2].public_key();
+    let anti_entropy_packets = net.procs[0]
+        .anti_entropy(0, q_actor)
+        .into_iter()
+        .map(|vote_msg| Packet {
+            source: genesis,
+            vote_msg,
+        });
+
+    net.enqueue_packets(anti_entropy_packets);
+    net.drain_queued_packets().unwrap();
+
+    for i in 0..net.procs.len() {
+        for j in 0..net.procs.len() {
+            net.enqueue_anti_entropy(i, j);
         }
-        let n = n.min(7);
-        if n == 0 || instructions.len() > 12{
-            return Ok(TestResult::discard());
-        }
+    }
 
-        let mut net = Net::with_procs(n, &mut rng);
+    let res = net.drain_queued_packets();
 
-        // Assume procs[0] is the genesis proc. (trusts itself)
-        let gen_proc = net.genesis()?;
-        for proc in net.procs.iter_mut() {
-            proc.force_join(gen_proc);
-        }
+    net.generate_msc("prop_interpreter_qc3.msc").unwrap();
 
+    assert!(res.is_ok());
+}
 
-        for instruction in instructions {
-            match instruction {
-                Instruction::RequestJoin(p_idx, q_idx) => {
-                    // p requests to join q
-                    let p = net.procs[p_idx.min(n - 1)].public_key();
-                    let reconfig = Reconfig::Join(p);
+#[quickcheck]
+fn prop_interpreter(n: u8, instructions: Vec<Instruction>, seed: u8) -> eyre::Result<TestResult> {
+    let mut rng = StdRng::from_seed([seed; 32]);
 
-                    let q = &mut net.procs[q_idx.min(n - 1)];
-                    let q_actor = q.public_key();
-                    match q.propose(reconfig) {
-                        Ok(propose_vote_msgs) => {
-                            let propose_packets = propose_vote_msgs
-                                .into_iter()
-                                .map(|vote_msg| Packet { source: q_actor, vote_msg });
-                            net.reconfigs_by_gen.entry(q.pending_gen).or_default().insert(reconfig);
-                            net.enqueue_packets(propose_packets);
-                        }
-                        Err(Error::JoinRequestForExistingMember { .. }) => {
-                            assert!(q.members(q.gen)?.contains(&p));
-                        }
-                        Err(Error::VoteFromNonMember { .. }) => {
-                            assert!(!q.members(q.gen)?.contains(&q.public_key()));
-                        }
-                        Err(Error::ExistingVoteIncompatibleWithNewVote { existing_vote }) => {
-                            // This proc has already committed to a vote this round
-                            assert_eq!(q.votes.get(&q.public_key()), Some(&existing_vote));
-                        }
-                        Err(err) => {
-                            // invalid request.
-                            panic!("Failure to reconfig is not handled yet: {:?}", err);
-                        }
+    fn super_majority(m: usize, n: usize) -> bool {
+        3 * m > 2 * n
+    }
+
+    let n = n.min(7) as usize;
+    if n == 0 || instructions.len() > 12 {
+        return Ok(TestResult::discard());
+    }
+
+    let mut net = Net::with_procs(n, &mut rng);
+
+    // Assume procs[0] is the genesis proc. (trusts itself)
+    let gen_proc = net.genesis()?;
+    for proc in net.procs.iter_mut() {
+        proc.force_join(gen_proc);
+    }
+
+    for instruction in instructions {
+        match instruction {
+            Instruction::RequestJoin(p_idx, q_idx) => {
+                // p requests to join q
+                let p = net.procs[p_idx.min(n - 1)].public_key();
+                let reconfig = Reconfig::Join(p);
+
+                let q = &mut net.procs[q_idx.min(n - 1)];
+                let q_actor = q.public_key();
+                match q.propose(reconfig) {
+                    Ok(propose_vote_msgs) => {
+                        let propose_packets =
+                            propose_vote_msgs.into_iter().map(|vote_msg| Packet {
+                                source: q_actor,
+                                vote_msg,
+                            });
+                        net.reconfigs_by_gen
+                            .entry(q.pending_gen)
+                            .or_default()
+                            .insert(reconfig);
+                        net.enqueue_packets(propose_packets);
                     }
-                },
-                Instruction::RequestLeave(p_idx, q_idx) => {
-                    // p requests to leave q
-                    let p = net.procs[p_idx.min(n - 1)].public_key();
-                    let reconfig = Reconfig::Leave(p);
-
-                    let q = &mut net.procs[q_idx.min(n - 1)];
-                    let q_actor = q.public_key();
-                    match q.propose(reconfig) {
-                        Ok(propose_vote_msgs) => {
-                            let propose_packets = propose_vote_msgs.
-                                into_iter().
-                                map(|vote_msg| Packet { source: q_actor, vote_msg });
-                            net.reconfigs_by_gen.entry(q.pending_gen).or_default().insert(reconfig);
-                            net.enqueue_packets(propose_packets);
-                        }
-                        Err(Error::LeaveRequestForNonMember { .. }) => {
-                            assert!(!q.members(q.gen)?.contains(&p));
-                        }
-                        Err(Error::VoteFromNonMember { .. }) => {
-                            assert!(!q.members(q.gen)?.contains(&q.public_key()));
-                        }
-                        Err(Error::ExistingVoteIncompatibleWithNewVote { existing_vote }) => {
-                            // This proc has already committed to a vote
-                            assert_eq!(q.votes.get(&q.public_key()), Some(&existing_vote));
-                        }
-                        Err(err) => {
-                            // invalid request.
-                            panic!("Leave Failure is not handled yet: {:?}", err);
-                        }
+                    Err(Error::JoinRequestForExistingMember { .. }) => {
+                        assert!(q.members(q.gen)?.contains(&p));
                     }
-                },
-                Instruction::DeliverPacketFromSource(source_idx) => {
-                    // deliver packet
-                    let source = net.procs[source_idx.min(n - 1)].public_key();
-                    net.deliver_packet_from_source(source)?;
+                    Err(Error::VoteFromNonMember { .. }) => {
+                        assert!(!q.members(q.gen)?.contains(&q.public_key()));
+                    }
+                    Err(Error::ExistingVoteIncompatibleWithNewVote { existing_vote }) => {
+                        // This proc has already committed to a vote this round
+                        assert_eq!(q.votes.get(&q.public_key()), Some(&existing_vote));
+                    }
+                    Err(err) => {
+                        // invalid request.
+                        panic!("Failure to reconfig is not handled yet: {:?}", err);
+                    }
                 }
-                Instruction::AntiEntropy(gen, p_idx, q_idx) => {
-                    let p = &net.procs[p_idx.min(n - 1)];
-                    let q_actor = net.procs[q_idx.min(n - 1)].public_key();
-                    let p_actor = p.public_key();
-                    let anti_entropy_packets = p.anti_entropy(gen, q_actor)
+            }
+            Instruction::RequestLeave(p_idx, q_idx) => {
+                // p requests to leave q
+                let p = net.procs[p_idx.min(n - 1)].public_key();
+                let reconfig = Reconfig::Leave(p);
+
+                let q = &mut net.procs[q_idx.min(n - 1)];
+                let q_actor = q.public_key();
+                match q.propose(reconfig) {
+                    Ok(propose_vote_msgs) => {
+                        let propose_packets =
+                            propose_vote_msgs.into_iter().map(|vote_msg| Packet {
+                                source: q_actor,
+                                vote_msg,
+                            });
+                        net.reconfigs_by_gen
+                            .entry(q.pending_gen)
+                            .or_default()
+                            .insert(reconfig);
+                        net.enqueue_packets(propose_packets);
+                    }
+                    Err(Error::LeaveRequestForNonMember { .. }) => {
+                        assert!(!q.members(q.gen)?.contains(&p));
+                    }
+                    Err(Error::VoteFromNonMember { .. }) => {
+                        assert!(!q.members(q.gen)?.contains(&q.public_key()));
+                    }
+                    Err(Error::ExistingVoteIncompatibleWithNewVote { existing_vote }) => {
+                        // This proc has already committed to a vote
+                        assert_eq!(q.votes.get(&q.public_key()), Some(&existing_vote));
+                    }
+                    Err(err) => {
+                        // invalid request.
+                        panic!("Leave Failure is not handled yet: {:?}", err);
+                    }
+                }
+            }
+            Instruction::DeliverPacketFromSource(source_idx) => {
+                // deliver packet
+                let source = net.procs[source_idx.min(n - 1)].public_key();
+                net.deliver_packet_from_source(source)?;
+            }
+            Instruction::AntiEntropy(gen, p_idx, q_idx) => {
+                let p = &net.procs[p_idx.min(n - 1)];
+                let q_actor = net.procs[q_idx.min(n - 1)].public_key();
+                let p_actor = p.public_key();
+                let anti_entropy_packets =
+                    p.anti_entropy(gen, q_actor)
                         .into_iter()
-                        .map(|vote_msg| Packet { source: p_actor, vote_msg });
-                    net.enqueue_packets(anti_entropy_packets);
-                }
+                        .map(|vote_msg| Packet {
+                            source: p_actor,
+                            vote_msg,
+                        });
+                net.enqueue_packets(anti_entropy_packets);
             }
         }
-
-        loop {
-            net.drain_queued_packets()?;
-            for i in 0..net.procs.len() {
-                for j in 0..net.procs.len() {
-                    net.enqueue_anti_entropy(i, j);
-                }
-            }
-            if net.packets.is_empty() {
-                break;
-            }
-            net.drain_queued_packets()?;
-        }
-
-        // We should have no more pending votes.
-        for p in net.procs.iter() {
-            assert_eq!(p.votes, Default::default());
-        }
-
-        let mut procs_by_gen: BTreeMap<Generation, Vec<State>> = Default::default();
-
-        for proc in net.procs {
-            procs_by_gen.entry(proc.gen).or_default().push(proc);
-        }
-
-        let max_gen = procs_by_gen.keys().last().ok_or_else(|| eyre!("No generations logged"))?;
-
-        // And procs at each generation should have agreement on members
-        for (gen, procs) in procs_by_gen.iter() {
-            let mut proc_iter = procs.iter();
-            let first = proc_iter.next().ok_or(Error::NoMembers)?;
-            if *gen > 0 {
-                // TODO: remove this gen > 0 constraint
-                assert_eq!(first.members(first.gen)?, net.members_at_gen[gen]);
-            }
-            for proc in proc_iter {
-                assert_eq!(first.members(first.gen)?, proc.members(proc.gen)?, "gen: {}", gen);
-            }
-        }
-
-        // TODO: everyone that a proc at G considers a member is also at generation G
-
-        for (gen, reconfigs) in net.reconfigs_by_gen.iter() {
-            let members_at_prev_gen = &net.members_at_gen[&(gen - 1)];
-            let members_at_curr_gen = net.members_at_gen[gen].clone();
-            let mut reconfigs_applied: BTreeSet<&Reconfig> = Default::default();
-            for reconfig in reconfigs {
-                match reconfig {
-                    Reconfig::Join(p) => {
-                        assert!(!members_at_prev_gen.contains(p));
-                        if members_at_curr_gen.contains(p) {
-                            reconfigs_applied.insert(reconfig);
-                        }
-                    }
-                    Reconfig::Leave(p) => {
-                        assert!(members_at_prev_gen.contains(p));
-                        if !members_at_curr_gen.contains(p) {
-                            reconfigs_applied.insert(reconfig);
-                        }
-                    }
-                }
-            }
-
-            assert_ne!(reconfigs_applied, Default::default());
-        }
-
-        let proc_at_max_gen = procs_by_gen[max_gen].get(0).ok_or(Error::NoMembers)?;
-        assert!(super_majority(procs_by_gen[max_gen].len(), proc_at_max_gen.members(*max_gen)?.len()), "{:?}", procs_by_gen);
-
-        Ok(TestResult::passed())
     }
 
-    fn prop_validate_reconfig(join_or_leave: bool, actor_idx: usize, members: u8) -> Result<TestResult, Error> {
-        let mut rng = StdRng::from_seed([0u8; 32]);
-
-        if members + 1 > 7 {
-            // + 1 from the initial proc
-            return Ok(TestResult::discard());
-        }
-
-        let mut proc = State::random(&mut rng);
-
-        let trusted_actors: Vec<_> = (0..members)
-            .map(|_| PublicKey::random(&mut rng))
-            .chain(vec![proc.public_key()])
-            .collect();
-
-        for a in trusted_actors.iter().copied() {
-            proc.force_join(a);
-        }
-
-        let all_actors = {
-            let mut actors = trusted_actors;
-            actors.push(PublicKey::random(&mut rng));
-            actors
-        };
-
-        let actor = all_actors[actor_idx % all_actors.len()];
-        let reconfig = match join_or_leave {
-            true => Reconfig::Join(actor),
-            false => Reconfig::Leave(actor),
-        };
-
-        let valid_res = proc.validate_reconfig(reconfig);
-        let proc_members = proc.members(proc.gen)?;
-        match reconfig {
-            Reconfig::Join(actor) => {
-                if proc_members.contains(&actor) {
-                    assert!(matches!(valid_res, Err(Error::JoinRequestForExistingMember {..})));
-                } else if members + 1 == 7 {
-                    assert!(matches!(valid_res, Err(Error::MembersAtCapacity {..})));
-                } else {
-                    assert!(valid_res.is_ok());
-                }
+    // 3 rounds of anti-entropy will get everyone in sync
+    for _ in 0..3 {
+        net.drain_queued_packets()?;
+        for i in 0..net.procs.len() {
+            for j in 0..net.procs.len() {
+                net.enqueue_anti_entropy(i, j);
             }
-            Reconfig::Leave(actor) => {
-                if proc_members.contains(&actor) {
-                    assert!(valid_res.is_ok());
-                } else {
-                    assert!(matches!(valid_res, Err(Error::LeaveRequestForNonMember {..})));
-
-                }
-            }
-        };
-
-        Ok(TestResult::passed())
+        }
     }
+    assert!(
+        net.packets.is_empty(),
+        "We should have no more pending packets"
+    );
+
+    // We should have no more pending votes.
+    for p in net.procs.iter() {
+        assert_eq!(p.votes, Default::default());
+    }
+
+    let mut procs_by_gen: BTreeMap<Generation, Vec<State>> = Default::default();
+
+    for proc in net.procs {
+        procs_by_gen.entry(proc.gen).or_default().push(proc);
+    }
+
+    let max_gen = procs_by_gen
+        .keys()
+        .last()
+        .ok_or_else(|| eyre!("No generations logged"))?;
+
+    // And procs at each generation should have agreement on members
+    for (gen, procs) in procs_by_gen.iter() {
+        let mut proc_iter = procs.iter();
+        let first = proc_iter.next().ok_or(Error::NoMembers)?;
+        if *gen > 0 {
+            // TODO: remove this gen > 0 constraint
+            assert_eq!(first.members(first.gen)?, net.members_at_gen[gen]);
+        }
+        for proc in proc_iter {
+            assert_eq!(
+                first.members(first.gen)?,
+                proc.members(proc.gen)?,
+                "gen: {}",
+                gen
+            );
+        }
+    }
+
+    // TODO: everyone that a proc at G considers a member is also at generation G
+
+    for (gen, reconfigs) in net.reconfigs_by_gen.iter() {
+        let members_at_prev_gen = &net.members_at_gen[&(gen - 1)];
+        let members_at_curr_gen = net.members_at_gen[gen].clone();
+        let mut reconfigs_applied: BTreeSet<&Reconfig> = Default::default();
+        for reconfig in reconfigs {
+            match reconfig {
+                Reconfig::Join(p) => {
+                    assert!(!members_at_prev_gen.contains(p));
+                    if members_at_curr_gen.contains(p) {
+                        reconfigs_applied.insert(reconfig);
+                    }
+                }
+                Reconfig::Leave(p) => {
+                    assert!(members_at_prev_gen.contains(p));
+                    if !members_at_curr_gen.contains(p) {
+                        reconfigs_applied.insert(reconfig);
+                    }
+                }
+            }
+        }
+
+        assert_ne!(reconfigs_applied, Default::default());
+    }
+
+    let proc_at_max_gen = procs_by_gen[max_gen].get(0).ok_or(Error::NoMembers)?;
+    assert!(
+        super_majority(
+            procs_by_gen[max_gen].len(),
+            proc_at_max_gen.members(*max_gen)?.len()
+        ),
+        "{:?}",
+        procs_by_gen
+    );
+
+    Ok(TestResult::passed())
+}
+
+#[quickcheck]
+fn prop_validate_reconfig(
+    join_or_leave: bool,
+    actor_idx: u8,
+    members: u8,
+    seed: u8,
+) -> Result<TestResult, Error> {
+    let mut rng = StdRng::from_seed([seed; 32]);
+
+    if members >= 7 {
+        return Ok(TestResult::discard());
+    }
+
+    let mut proc = State::random(&mut rng);
+
+    let trusted_actors: Vec<_> = (0..members)
+        .map(|_| PublicKey::random(&mut rng))
+        .chain(vec![proc.public_key()])
+        .collect();
+
+    for a in trusted_actors.iter().copied() {
+        proc.force_join(a);
+    }
+
+    let all_actors = {
+        let mut actors = trusted_actors;
+        actors.push(PublicKey::random(&mut rng));
+        actors
+    };
+
+    let actor = all_actors[actor_idx as usize % all_actors.len()];
+    let reconfig = match join_or_leave {
+        true => Reconfig::Join(actor),
+        false => Reconfig::Leave(actor),
+    };
+
+    let valid_res = proc.validate_reconfig(reconfig);
+    let proc_members = proc.members(proc.gen)?;
+    match reconfig {
+        Reconfig::Join(actor) => {
+            if proc_members.contains(&actor) {
+                assert!(matches!(
+                    valid_res,
+                    Err(Error::JoinRequestForExistingMember { .. })
+                ));
+            } else if members + 1 == 7 {
+                assert!(matches!(valid_res, Err(Error::MembersAtCapacity { .. })));
+            } else {
+                assert!(valid_res.is_ok());
+            }
+        }
+        Reconfig::Leave(actor) => {
+            if proc_members.contains(&actor) {
+                assert!(valid_res.is_ok());
+            } else {
+                assert!(matches!(
+                    valid_res,
+                    Err(Error::LeaveRequestForNonMember { .. })
+                ));
+            }
+        }
+    };
+
+    Ok(TestResult::passed())
+}
+
+#[quickcheck]
+fn prop_bft_consensus(
+    recursion_limit: u8,
+    n: u8,
+    faulty: Vec<u8>,
+    seed: u8,
+) -> Result<TestResult, Error> {
+    let n = n % 6 + 1;
+    let recursion_limit = recursion_limit % (n / 2).max(1);
+    let faulty = BTreeSet::from_iter(
+        faulty
+            .into_iter()
+            .map(|p| p % n)
+            .filter(|p| p != &0) // genesis can not be faulty
+            .take((n / 3) as usize),
+    );
+    // All non-faulty nodes eventually decide on a reconfig
+
+    let mut rng = rand::rngs::StdRng::from_seed([seed; 32]);
+
+    let mut net = Net::with_procs(n as usize, &mut rng);
+
+    // Set first proc as genesis
+    let genesis = net.procs[0].public_key();
+    for p in net.procs.iter_mut() {
+        p.force_join(genesis);
+    }
+
+    let faulty = BTreeSet::from_iter(
+        faulty
+            .into_iter()
+            .map(|idx| net.procs[idx as usize].public_key()),
+    );
+    let n_actions = rng.gen::<u8>() % 3;
+
+    for _ in 0..n_actions {
+        match rng.gen::<u8>() % 3 {
+            0 if !faulty.is_empty() => {
+                match rng.gen::<bool>() {
+                    true => {
+                        // send a randomized packet
+                        let packet = net.gen_faulty_packet(recursion_limit, &faulty, &mut rng);
+                        net.enqueue_packets(vec![packet]);
+                    }
+                    false => {
+                        // drop a random packet
+                        let source = net.gen_public_key(&mut rng);
+                        net.drop_packet_from_source(source);
+                    }
+                };
+            }
+            1 => {
+                // node takes honest action
+                let pks = BTreeSet::from_iter(net.procs.iter().map(State::public_key));
+
+                let proc = if let Some(proc) = net
+                    .procs
+                    .iter_mut()
+                    .filter(|p| !faulty.contains(&p.public_key())) // filter out faulty nodes
+                    .filter(|p| p.members(p.gen).unwrap().contains(&p.public_key())) // filter out non-members
+                    .filter(|p| p.gen != p.pending_gen) // filter out nodes who have already voted this round
+                    .choose(&mut rng)
+                {
+                    proc
+                } else {
+                    // No honest node can take an action
+                    continue;
+                };
+
+                let source = proc.public_key();
+
+                let reconfig = match rng.gen::<bool>() {
+                    true => Reconfig::Join(
+                        pks.into_iter()
+                            .filter(|pk| !proc.members(proc.gen).unwrap().contains(pk))
+                            .choose(&mut rng)
+                            .unwrap(),
+                    ),
+                    false => Reconfig::Leave(
+                        pks.into_iter()
+                            .filter(|pk| proc.members(proc.gen).unwrap().contains(pk))
+                            .choose(&mut rng)
+                            .unwrap(),
+                    ),
+                };
+
+                let packets = Vec::from_iter(
+                    proc.propose(reconfig)
+                        .unwrap()
+                        .into_iter()
+                        .map(|vote_msg| Packet { source, vote_msg }),
+                );
+                net.enqueue_packets(packets);
+            }
+            _ => {
+                // Network delivers a packet
+                let source = net.gen_public_key(&mut rng);
+                let _ = net.deliver_packet_from_source(source);
+            }
+        };
+    }
+
+    let _ = net.drain_queued_packets();
+
+    let honest_procs = Vec::from_iter(
+        net.procs
+            .iter()
+            .filter(|p| !faulty.contains(&p.public_key())),
+    );
+
+    // BFT TERMINATION PROPERTY: all honest procs have decided ==>
+    for p in honest_procs.iter() {
+        assert_eq!(p.votes, Default::default());
+        assert_eq!(p.gen, p.pending_gen);
+    }
+
+    // BFT AGREEMENT PROPERTY: all honest procs have decided on the same values
+    let reference_proc = &honest_procs[0];
+    for p in honest_procs.iter() {
+        assert_eq!(reference_proc.gen, p.gen);
+        for g in 0..=reference_proc.gen {
+            assert_eq!(reference_proc.members(g).unwrap(), p.members(g).unwrap())
+        }
+    }
+
+    Ok(TestResult::passed())
 }

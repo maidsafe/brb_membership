@@ -392,7 +392,7 @@ impl State {
         Ok(vec![])
     }
 
-    fn sign_vote(&self, vote: Vote) -> Result<SignedVote, Error> {
+    pub fn sign_vote(&self, vote: Vote) -> Result<SignedVote, Error> {
         Ok(SignedVote {
             voter: self.public_key(),
             sig: self.secret_key.sign(&vote.to_bytes()?),
