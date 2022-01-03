@@ -495,6 +495,7 @@ impl State {
 
     pub fn validate_signed_vote(&self, signed_vote: &SignedVote) -> Result<(), Error> {
         signed_vote.validate_signature()?;
+        self.validate_vote(&signed_vote.vote)?;
 
         let members = self.members(self.gen)?;
         if !members.contains(&signed_vote.voter) {
@@ -509,12 +510,7 @@ impl State {
             Err(Error::ExistingVoteIncompatibleWithNewVote {
                 existing_vote: self.votes[&signed_vote.voter].clone(),
             })
-        } else if self.pending_gen == self.gen {
-            // We are starting a vote for the next generation
-            self.validate_vote(&signed_vote.vote)
         } else {
-            // This is a vote for this generation
-
             // Ensure that nobody is trying to change their reconfig's.
             let reconfigs: BTreeSet<(PublicKey, Reconfig)> = self
                 .votes
@@ -527,7 +523,7 @@ impl State {
             if voters.len() != reconfigs.len() {
                 Err(Error::VoterChangedMind { reconfigs })
             } else {
-                self.validate_vote(&signed_vote.vote)
+                Ok(())
             }
         }
     }
