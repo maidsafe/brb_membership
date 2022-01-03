@@ -1,10 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::File;
 use std::io::Write;
+use std::iter;
 
 //use brb_membership::{Error, Generation, Reconfig, State, VoteMsg};
-use brb_membership::{Error, Generation, PublicKey, Reconfig, State, VoteMsg};
-use rand::{CryptoRng, Rng};
+use brb_membership::{
+    Ballot, Error, Generation, PublicKey, Reconfig, SignedVote, State, Vote, VoteMsg,
+};
+use rand::prelude::{IteratorRandom, StdRng};
+use rand::Rng;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Packet {
@@ -22,12 +26,91 @@ pub struct Net {
 }
 
 impl Net {
-    pub fn with_procs(n: usize, mut rng: impl Rng + CryptoRng) -> Self {
-        let mut procs = Vec::from_iter((0..n).into_iter().map(|_| State::random(&mut rng)));
+    pub fn with_procs(n: usize, mut rng: &mut StdRng) -> Self {
+        let mut procs = Vec::from_iter(iter::repeat_with(|| State::random(&mut rng)).take(n));
         procs.sort_by_key(|p| p.secret_key.public_key());
         Self {
             procs,
             ..Default::default()
+        }
+    }
+
+    pub fn proc(&self, public_key: PublicKey) -> Option<&State> {
+        self.procs.iter().find(|p| p.public_key() == public_key)
+    }
+
+    /// Pick a random public key from the set of procs
+    pub fn gen_public_key(&self, rng: &mut StdRng) -> PublicKey {
+        self.procs
+            .iter()
+            .choose(rng)
+            .map(State::public_key)
+            .unwrap()
+    }
+
+    /// Generate a randomized ballot
+    pub fn gen_ballot(
+        &self,
+        recursion: u8,
+        faulty: &BTreeSet<PublicKey>,
+        rng: &mut StdRng,
+    ) -> Ballot {
+        match rng.gen() || recursion == 0 {
+            true => Ballot::Propose(match rng.gen() {
+                true => Reconfig::Join(self.gen_public_key(rng)),
+                false => Reconfig::Leave(self.gen_public_key(rng)),
+            }),
+            false => {
+                let n_votes = rng.gen::<usize>() % self.procs.len().pow(2);
+                let random_votes = BTreeSet::from_iter(
+                    iter::repeat_with(|| self.gen_faulty_vote(recursion - 1, faulty, rng))
+                        .take(n_votes),
+                );
+                match rng.gen() {
+                    true => Ballot::Merge(random_votes),
+                    false => Ballot::SuperMajority(random_votes),
+                }
+            }
+        }
+    }
+
+    /// Generate a random faulty vote
+    pub fn gen_faulty_vote(
+        &self,
+        recursion: u8,
+        faulty_nodes: &BTreeSet<PublicKey>,
+        rng: &mut StdRng,
+    ) -> SignedVote {
+        let faulty_node = faulty_nodes
+            .iter()
+            .choose(rng)
+            .and_then(|pk| self.proc(*pk))
+            .unwrap();
+
+        let vote = Vote {
+            gen: rng.gen::<u64>() % 7,
+            ballot: self.gen_ballot(recursion, faulty_nodes, rng),
+        };
+
+        let mut signed_vote = faulty_node.sign_vote(vote).unwrap();
+        let node_to_impersonate = self.procs.iter().choose(rng).unwrap().public_key();
+        signed_vote.voter = node_to_impersonate;
+        signed_vote
+    }
+
+    /// Generate a faulty random packet
+    pub fn gen_faulty_packet(
+        &self,
+        recursion: u8,
+        faulty: &BTreeSet<PublicKey>,
+        rng: &mut StdRng,
+    ) -> Packet {
+        Packet {
+            source: *faulty.iter().choose(rng).unwrap(),
+            vote_msg: VoteMsg {
+                vote: self.gen_faulty_vote(recursion, faulty, rng),
+                dest: self.gen_public_key(rng),
+            },
         }
     }
 
@@ -38,6 +121,10 @@ impl Net {
             .ok_or(Error::NoMembers)
     }
 
+    pub fn drop_packet_from_source(&mut self, source: PublicKey) {
+        self.packets.get_mut(&source).map(VecDeque::pop_front);
+    }
+
     pub fn deliver_packet_from_source(&mut self, source: PublicKey) -> Result<(), Error> {
         let packet = match self.packets.get_mut(&source).map(|ps| ps.pop_front()) {
             Some(Some(p)) => p,
@@ -46,7 +133,7 @@ impl Net {
         self.purge_empty_queues();
 
         let dest = packet.vote_msg.dest;
-        println!("delivering {:?}->{:?} {:#?}", packet.source, dest, packet);
+        // println!("delivering {:?}->{:?} {:?}", packet.source, dest, packet);
 
         self.delivered_packets.push(packet.clone());
 
@@ -55,7 +142,7 @@ impl Net {
         let dest_proc = match dest_proc_opt {
             Some(proc) => proc,
             None => {
-                println!("[NET] destination proc does not exist, dropping packet");
+                // println!("[NET] destination proc does not exist, dropping packet");
                 return Ok(());
             }
         };
@@ -64,7 +151,7 @@ impl Net {
         let vote = packet.vote_msg.vote;
 
         let resp = dest_proc.handle_signed_vote(vote);
-        println!("[NET] resp: {:#?}", resp);
+        // println!("[NET] resp: {:?}", resp);
         match resp {
             Ok(vote_msgs) => {
                 let dest_actor = dest_proc.public_key();
