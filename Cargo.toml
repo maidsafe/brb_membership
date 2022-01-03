@@ -28,6 +28,20 @@ log = "0.4.13"
 
 [features]
 default = [ "blsttc" ]
+bad_crypto = [] # stubbed out crypto for fast tests
+
+[profile.test]
+opt-level = 3
+debug = true
+overflow-checks = true
+
+[profile.bench]
+debug = true
+
+[profile.release]
+debug = true
 
 [dev-dependencies]
 eyre = "0.6.5"
+quickcheck = "1"
+quickcheck_macros = "1"
