@@ -4,7 +4,7 @@ use signature::{Signer, Verifier};
 
 pub type Error = signature::Error;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicKey(ed25519::PublicKey);
 
 impl PublicKey {
@@ -14,6 +14,12 @@ impl PublicKey {
 
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), Error> {
         self.0.verify(msg, &signature.0)
+    }
+}
+
+impl core::fmt::Debug for PublicKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self, f)
     }
 }
 

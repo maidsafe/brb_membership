@@ -8,9 +8,8 @@ repository = "https://github.com/maidsafe/brb_membership"
 edition = "2021"
 
 [dependencies]
-crdts = "5.0.0"
 rand = "0.7.3"
-serde = "1.0.106"
+serde = {version = "1", features = ["derive"]}
 bincode = "1.2.1"
 hex = "0.4.2"
 thiserror = "1.0"
