@@ -69,4 +69,8 @@ pub enum Error {
     #[cfg(feature = "blsttc")]
     #[error("Blsttc Error {0}")]
     Blsttc(#[from] crate::blsttc::Error),
+
+    #[cfg(feature = "bad_crypto")]
+    #[error("Failed Signature Verification")]
+    BadCrypto(#[from] crate::bad_crypto::Error),
 }
