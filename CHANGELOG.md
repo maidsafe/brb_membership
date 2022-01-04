@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.4.0](https://github.com/maidsafe/brb_membership/compare/v1.3.0...v1.4.0) (2022-01-04)
+
+
+### Features
+
+* **prop_testing:** better rng seeds: more than 256 variations ([92174ab](https://github.com/maidsafe/brb_membership/commit/92174ab8d239f976ba6c67a808d0104fdd928447))
+
 ## [1.3.0](https://github.com/maidsafe/brb_membership/compare/v1.2.0...v1.3.0) (2022-01-04)
 
 
