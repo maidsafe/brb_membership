@@ -661,8 +661,10 @@ fn test_interpreter_qc3() {
 }
 
 #[quickcheck]
-fn prop_interpreter(n: u8, instructions: Vec<Instruction>, seed: u8) -> eyre::Result<TestResult> {
-    let mut rng = StdRng::from_seed([seed; 32]);
+fn prop_interpreter(n: u8, instructions: Vec<Instruction>, seed: u128) -> eyre::Result<TestResult> {
+    let mut seed_buf = [0u8; 32];
+    seed_buf[0..16].copy_from_slice(&seed.to_le_bytes());
+    let mut rng = StdRng::from_seed(seed_buf);
 
     fn super_majority(m: usize, n: usize) -> bool {
         3 * m > 2 * n
@@ -868,9 +870,11 @@ fn prop_validate_reconfig(
     join_or_leave: bool,
     actor_idx: u8,
     members: u8,
-    seed: u8,
+    seed: u128,
 ) -> Result<TestResult, Error> {
-    let mut rng = StdRng::from_seed([seed; 32]);
+    let mut seed_buf = [0u8; 32];
+    seed_buf[0..16].copy_from_slice(&seed.to_le_bytes());
+    let mut rng = StdRng::from_seed(seed_buf);
 
     if members >= 7 {
         return Ok(TestResult::discard());
@@ -934,7 +938,7 @@ fn prop_bft_consensus(
     recursion_limit: u8,
     n: u8,
     faulty: Vec<u8>,
-    seed: u8,
+    seed: u128,
 ) -> Result<TestResult, Error> {
     let n = n % 6 + 1;
     let recursion_limit = recursion_limit % (n / 2).max(1);
@@ -947,7 +951,9 @@ fn prop_bft_consensus(
     );
     // All non-faulty nodes eventually decide on a reconfig
 
-    let mut rng = rand::rngs::StdRng::from_seed([seed; 32]);
+    let mut seed_buf = [0u8; 32];
+    seed_buf[0..16].copy_from_slice(&seed.to_le_bytes());
+    let mut rng = rand::rngs::StdRng::from_seed(seed_buf);
 
     let mut net = Net::with_procs(n as usize, &mut rng);
 
