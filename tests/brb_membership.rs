@@ -706,7 +706,7 @@ fn prop_interpreter(n: u8, instructions: Vec<Instruction>, seed: u8) -> eyre::Re
                     Err(Error::JoinRequestForExistingMember { .. }) => {
                         assert!(q.members(q.gen)?.contains(&p));
                     }
-                    Err(Error::VoteFromNonMember { .. }) => {
+                    Err(Error::NonMember { .. }) => {
                         assert!(!q.members(q.gen)?.contains(&q.public_key()));
                     }
                     Err(Error::ExistingVoteIncompatibleWithNewVote { existing_vote }) => {
@@ -742,7 +742,7 @@ fn prop_interpreter(n: u8, instructions: Vec<Instruction>, seed: u8) -> eyre::Re
                     Err(Error::LeaveRequestForNonMember { .. }) => {
                         assert!(!q.members(q.gen)?.contains(&p));
                     }
-                    Err(Error::VoteFromNonMember { .. }) => {
+                    Err(Error::NonMember { .. }) => {
                         assert!(!q.members(q.gen)?.contains(&q.public_key()));
                     }
                     Err(Error::ExistingVoteIncompatibleWithNewVote { existing_vote }) => {

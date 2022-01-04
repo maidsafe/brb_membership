@@ -39,9 +39,9 @@ pub enum Error {
         gen: Generation,
         pending_gen: Generation,
     },
-    #[error("Vote from non member ({voter:?} not in {members:?})")]
-    VoteFromNonMember {
-        voter: PublicKey,
+    #[error("({public_key} is not in {members:?})")]
+    NonMember {
+        public_key: PublicKey,
         members: BTreeSet<PublicKey>,
     },
     #[error("Voter changed their mind: {reconfigs:?}")]
