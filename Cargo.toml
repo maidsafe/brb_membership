@@ -1,6 +1,6 @@
 [package]
 name = "brb_membership"
-version = "1.2.0"
+version = "1.3.0"
 description = "BRB Membership: Enables nodes to dynamically join and leave a BRB voting group"
 authors = [ "David Rusu <davidrusu.me@gmail.com>" ]
 license = "MIT OR BSD-3-Clause"
@@ -9,12 +9,15 @@ edition = "2021"
 
 [dependencies]
 rand = "0.7.3"
-serde = {version = "1", features = ["derive"]}
 bincode = "1.2.1"
 hex = "0.4.2"
 thiserror = "1.0"
 signature = "1.3.0"
 log = "0.4.13"
+
+  [dependencies.serde]
+  version = "1"
+  features = [ "derive" ]
 
   [dependencies.blsttc]
   version = "3.4.0"
@@ -28,7 +31,7 @@ log = "0.4.13"
 
 [features]
 default = [ "blsttc" ]
-bad_crypto = [] # stubbed out crypto for fast tests
+bad_crypto = [ ]
 
 [profile.test]
 opt-level = 3

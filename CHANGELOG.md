@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.3.0](https://github.com/maidsafe/brb_membership/compare/v1.2.0...v1.3.0) (2022-01-04)
+
+
+### Features
+
+* **bad_crypto:** stub slow cryptography functions with a fast one ([0447710](https://github.com/maidsafe/brb_membership/commit/0447710d0fffc2a2e7f28c16dd9af43102fde567))
+* **tests:** added bft_consensus property tests ([d14f974](https://github.com/maidsafe/brb_membership/commit/d14f974afd488eb8e60a83e091490418a3dc3e26))
+
+
+### Bug Fixes
+
+* **validation:** validate vote & no special case for  p_gen == gen ([f9e5248](https://github.com/maidsafe/brb_membership/commit/f9e5248e095e57a79441ead5a6b8c546e31cab87))
+
 ## [1.2.0](https://github.com/maidsafe/brb_membership/compare/v1.1.1...v1.2.0) (2021-12-29)
 
 
