@@ -160,7 +160,10 @@ impl Net {
                     vote_msg,
                 }));
             }
-            Err(Error::VoteFromNonMember { voter, members }) => {
+            Err(Error::NonMember {
+                public_key: voter,
+                members,
+            }) => {
                 assert_eq!(members, dest_members);
                 assert!(
                     !dest_members.contains(&voter),
