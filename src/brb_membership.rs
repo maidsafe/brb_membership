@@ -539,8 +539,8 @@ impl State {
         signed_vote.validate_signature()?;
         self.validate_vote(&signed_vote.vote)?;
         self.validate_is_member(signed_vote.voter)?;
-        self.validate_vote_supersedes_existing_vote(&signed_vote)?;
-        self.validate_voters_have_not_changed_proposals(&signed_vote)?;
+        self.validate_vote_supersedes_existing_vote(signed_vote)?;
+        self.validate_voters_have_not_changed_proposals(signed_vote)?;
         Ok(())
     }
 
